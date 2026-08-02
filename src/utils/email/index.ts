@@ -66,7 +66,7 @@ export async function sendDeliveryRequestEmail(params: {
      <p><strong>Quantity:</strong> ${quantity}<br/>
         <strong>Delivery address:</strong> ${address}<br/>
         <strong>Contact phone:</strong> ${contactPhone}</p>
-     <p>${button(`${env.CLIENT_URL}/partner/delivery-requests`, 'View delivery requests')}</p>`
+     <p>${button(`${env.PARTNER_CLIENT_URL}/partner/delivery-requests`, 'View delivery requests')}</p>`
   );
   await sendEmail(to, `New delivery request, ${productName}`, html);
 }
@@ -81,7 +81,7 @@ export async function sendCampaignApprovedEmail(params: {
     `Your campaign for ${productName} was approved`,
     `<p>Hi ${partnerName},</p>
      <p>Good news, your ad campaign for <strong>${productName}</strong> has been approved and is now pending payment. Please pay the billed amount to get it running.</p>
-     <p>${button(`${env.CLIENT_URL}/partner/campaigns`, 'View campaigns')}</p>`
+     <p>${button(`${env.PARTNER_CLIENT_URL}/partner/campaigns`, 'View campaigns')}</p>`
   );
   await sendEmail(to, `Campaign approved, ${productName}`, html);
 }
@@ -96,7 +96,7 @@ export async function sendContentApprovedEmail(params: {
     `Your training content "${contentTitle}" was approved`,
     `<p>Hi ${partnerName},</p>
      <p>Your training content <strong>${contentTitle}</strong> has been approved and is now published for plumbers to view.</p>
-     <p>${button(`${env.CLIENT_URL}/partner/content`, 'View content')}</p>`
+     <p>${button(`${env.PARTNER_CLIENT_URL}/partner/content`, 'View content')}</p>`
   );
   await sendEmail(to, `Training content approved, ${contentTitle}`, html);
 }
@@ -111,7 +111,7 @@ export async function sendProductApprovedEmail(params: {
     `Your product "${productName}" was approved`,
     `<p>Hi ${partnerName},</p>
      <p>Your product <strong>${productName}</strong> has been approved and is now live for customers and plumbers to see.</p>
-     <p>${button(`${env.CLIENT_URL}/partner/products`, 'View products')}</p>`
+     <p>${button(`${env.PARTNER_CLIENT_URL}/partner/products`, 'View products')}</p>`
   );
   await sendEmail(to, `Product approved, ${productName}`, html);
 }
@@ -125,7 +125,7 @@ export async function sendPartnerAccountApprovedEmail(params: {
     'Your Plumbers partner account was approved',
     `<p>Hi ${partnerName},</p>
      <p>Your partner account has been verified and approved. You can now list products, run ad campaigns, and publish training content.</p>
-     <p>${button(`${env.CLIENT_URL}/partner/dashboard`, 'Go to your dashboard')}</p>`
+     <p>${button(`${env.PARTNER_CLIENT_URL}/partner/dashboard`, 'Go to your dashboard')}</p>`
   );
   await sendEmail(to, 'Your Plumbers partner account was approved', html);
 }

@@ -8,7 +8,7 @@ export const env = {
   JWT_SECRET: process.env.JWT_SECRET || 'jwt-secret-change-in-production',
   JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'jwt-refresh-secret-change-in-production',
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN || 'localhost',
-  CLIENT_URL: process.env.CLIENT_URL || 'http://localhost:3000',
+  PARTNER_CLIENT_URL: process.env.PARTNER_CLIENT_URL || 'http://localhost:3000',
   ADMIN_APP_URL: process.env.ADMIN_APP_URL || 'http://localhost:3002',
 
   CF_ACCOUNT_ID: process.env.CF_ACCOUNT_ID || '',

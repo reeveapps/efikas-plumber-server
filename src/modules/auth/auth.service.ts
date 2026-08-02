@@ -19,6 +19,7 @@ import { sendEmail } from '../../utils/email.js';
 import { sendTwoFactorCodeEmail } from '../../utils/email/index.js';
 import { verifyGoogleIdToken, verifyAppleIdToken } from '../../utils/oauth.js';
 import formatPhoneNumber from '../../utils/formatPhoneNumber.js';
+import { env } from '../../config/env.js';
 import { OTP_EXPIRY_SECONDS, OTP_MAX_ATTEMPTS } from '../../config/constants.js';
 
 // Twilio Verify expects E.164 (`+2547...`); the rest of the app stores/passes
@@ -353,7 +354,11 @@ export async function forgotPassword(email: string): Promise<void> {
   if (!user || !user.passwordHash) return; // don't leak account existence
 
   const token = generatePasswordResetToken(user.id);
-  const resetUrl = `${process.env.CLIENT_URL ?? ''}/reset-password?token=${token}`;
+  // ADMIN resets in the admin console; PARTNER and SERVICE_MANAGER both live
+  // in the partner portal (same login form — see partners web app's
+  // auth-actions.ts note on SERVICE_MANAGER also going through it).
+  const baseUrl = user.role === Role.ADMIN ? env.ADMIN_APP_URL : env.PARTNER_CLIENT_URL;
+  const resetUrl = `${baseUrl}/reset-password?token=${token}`;
   await sendEmail(email, 'Reset your Plumbers password', `<p>Click <a href="${resetUrl}">here</a> to reset your password. This link expires in 15 minutes.</p>`);
 }
 
