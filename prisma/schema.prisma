@@ -1,0 +1,923 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  CUSTOMER
+  PLUMBER
+  SERVICE_MANAGER
+  PARTNER
+  ADMIN
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// Chosen as onboarding step 1. INDIVIDUAL submits idNumber + idDocument;
+// COMPANY submits businessRegNumber + businessReg document instead, and can
+// then manage a roster of other plumber accounts (see PlumberProfile.teamMembers).
+enum PlumberAccountType {
+  INDIVIDUAL
+  COMPANY
+}
+
+enum SubscriptionStatus {
+  NONE // individual plumber, no subscription needed
+  TRIAL
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum SubscriptionOwnerType {
+  COMPANY
+  PLUMBER // reserved for future — individual plumbers may opt into Pro later
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum ServiceCategory {
+  LEAK
+  BLOCKAGE
+  INSTALLATION
+  REPAIR
+  GEYSER
+  EMERGENCY
+  OTHER
+}
+
+enum BookingStatus {
+  REQUESTED
+  MATCHING
+  ACCEPTED
+  EN_ROUTE
+  ARRIVED
+  INSPECTING
+  AGREEMENT_REACHED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  DISPUTED
+  EXPIRED // no plumber accepted in time
+}
+
+enum PaymentType {
+  SUBSCRIPTION
+  JOB_PAYMENT
+  AD_CAMPAIGN
+}
+
+enum PaymentProvider {
+  MPESA
+  CARD
+  CASH // self-reported, no gateway involved
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum DisputeReason {
+  NO_SHOW
+  INCOMPLETE_WORK
+  DAMAGE
+  OVERCHARGING
+  UNPROFESSIONAL_CONDUCT
+  OTHER
+}
+
+// Shared status enum for both service disputes (Dispute, booking-specific)
+// and partner-product concerns (ProductConcern) — see docs/06 section 2.3.
+// Was `DisputeStatus` with `RESOLVED_PLUMBER`; renamed/broadened so the admin
+// "Concerns" inbox can merge both queues into one consistent set of states.
+enum ConcernStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED_CUSTOMER // ruled in the reporting customer/plumber's favor
+  RESOLVED_OTHER_PARTY // ruled in the plumber/partner's favor
+  DISMISSED
+}
+
+enum ProductConcernReason {
+  ITEM_NOT_AS_DESCRIBED
+  NOT_DELIVERED
+  MISLEADING_AD
+  OVERCHARGED
+  POOR_SUPPLIER_CONDUCT
+  OTHER
+}
+
+enum AdActionType {
+  CALL
+  REQUEST_DELIVERY
+  SAVE_PRODUCT
+  EXTERNAL_LINK
+}
+
+// Campaigns are billed as a flat admin-set rate per interval unit (see
+// AdPricingRate below), not the partner's own figure — replaces the old
+// AdBillingModel (FLAT/PER_CLICK/PER_IMPRESSION) concept entirely; per-click
+// and per-impression billing were never actually charged in that model.
+enum AdBillingInterval {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+// One row per interval — the flat KES price an admin charges for a single
+// unit of that interval (e.g. one week of WEEKLY). `createAd` looks this up
+// and multiplies by the number of units the partner's date range spans;
+// there is no per-partner or per-category variation in this first pass.
+model AdPricingRate {
+  interval  AdBillingInterval @id
+  priceKes  Int
+  updatedAt DateTime          @updatedAt
+}
+
+enum ProductStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  PAUSED
+  REJECTED
+}
+
+enum NotificationChannel {
+  PUSH
+  SMS
+  EMAIL
+  IN_APP
+}
+
+// Booking-independent chat (as opposed to `Message`, which requires an
+// existing Booking): customer<->supplier from a product page today,
+// customer<->plumber from a plumber's public profile before any booking
+// exists, and plumber<->supplier is a planned future addition — same model
+// covers all three, distinguished only by which roles the two participant
+// users hold.
+enum ConversationType {
+  CUSTOMER_SUPPLIER
+  CUSTOMER_PLUMBER
+  PLUMBER_SUPPLIER
+}
+
+enum DeliveryRequestStatus {
+  PENDING
+  CONFIRMED
+  DECLINED
+  FULFILLED
+}
+
+// CORE IDENTITY
+
+model User {
+  id              String    @id @default(cuid())
+  phone           String?   @unique
+  email           String?   @unique
+  passwordHash    String? // only SERVICE_MANAGER/PARTNER/ADMIN use password auth
+  name            String?
+  avatarUrl       String?
+  role            Role
+  isGuest         Boolean   @default(false)
+  phoneVerifiedAt DateTime?
+  emailVerifiedAt DateTime?
+  language        String    @default("en") // "en" | "sw"
+  isActive        Boolean   @default(true)
+  isBanned        Boolean   @default(false)
+  bannedReason    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  customerProfile CustomerProfile?
+  plumberProfile  PlumberProfile?
+  managerProfile  ServiceManagerProfile?
+  partnerProfile  PartnerProfile?
+  adminProfile    AdminProfile?
+
+  devices       DeviceToken[]
+  otps          OtpCode[]
+  notifications Notification[]
+  sentMessages  Message[]       @relation("SentMessages")
+  auditLogs     AdminAuditLog[] @relation("ActorAuditLogs")
+
+  conversationsAsUserA  Conversation[]        @relation("ConversationsAsUserA")
+  conversationsAsUserB  Conversation[]        @relation("ConversationsAsUserB")
+  sentConversationMsgs  ConversationMessage[] @relation("SentConversationMessages")
+
+  @@index([role])
+}
+
+model OtpCode {
+  id         String              @id @default(cuid())
+  userId     String
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code       String
+  channel    NotificationChannel // SMS or EMAIL
+  purpose    String // "login" | "verify_phone" | "reset_password"
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int                 @default(0)
+  createdAt  DateTime            @default(now())
+
+  @@index([userId, purpose])
+}
+
+model DeviceToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fcmToken  String   @unique
+  platform  String // "ios" | "android"
+  createdAt DateTime @default(now())
+}
+
+// CUSTOMER
+
+model CustomerProfile {
+  id               String            @id @default(cuid())
+  userId           String            @unique
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  segment          String? // "homeowner" | "landlord" | "business" | "contractor"
+  savedLocations   SavedLocation[]
+  bookings         Booking[]
+  reviewsWritten   Review[]          @relation("CustomerReviews")
+  disputesFiled    Dispute[]         @relation("CustomerDisputes")
+  deliveryRequests DeliveryRequest[] @relation("CustomerDeliveryRequests")
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+model SavedLocation {
+  id         String          @id @default(cuid())
+  customerId String
+  customer   CustomerProfile @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  label      String // "Home", "Office", "Rental - Kilimani"
+  address    String
+  latitude   Float
+  longitude  Float
+  isDefault  Boolean         @default(false)
+  createdAt  DateTime        @default(now())
+}
+
+// PLUMBER + COMPANY
+
+model Company {
+  id                 String                @id @default(cuid())
+  name               String
+  registrationNumber String?
+  ownerId            String                @unique
+  owner              ServiceManagerProfile @relation("OwnedCompany", fields: [ownerId], references: [id])
+  logoUrl            String?
+  verificationStatus VerificationStatus    @default(PENDING)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  plumbers      PlumberProfile[]
+  subscriptions Subscription[]
+  managers      ServiceManagerProfile[] @relation("CompanyStaff")
+}
+
+model ServiceManagerProfile {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String? // "Dispatcher", "Owner", "Supervisor"
+  companyId    String?
+  company      Company? @relation("CompanyStaff", fields: [companyId], references: [id])
+  ownedCompany Company? @relation("OwnedCompany")
+  createdAt    DateTime @default(now())
+}
+
+model PlumberProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
+
+  // Distinct from the ServiceManager-owned `Company` model above — this is a
+  // lightweight, self-contained "a COMPANY-type plumber manages a roster of
+  // other plumber accounts" concept (onboarding step 1 + the team roster
+  // screen), deliberately NOT wired into Company/ServiceManagerProfile at
+  // all to avoid conflating two different products. `companyOwnerId` is set
+  // only on plumbers added via the roster (add-one or CSV bulk upload).
+  accountType      PlumberAccountType @default(INDIVIDUAL)
+  businessRegNumber String?
+  companyOwnerId   String?
+  companyOwner     PlumberProfile?    @relation("PlumberTeamRoster", fields: [companyOwnerId], references: [id])
+  teamMembers      PlumberProfile[]   @relation("PlumberTeamRoster")
+
+  idNumber           String?
+  idDocumentUrl      String?
+  certificateUrls    String[]           @default([])
+  businessRegUrl     String?
+  verificationStatus VerificationStatus @default(PENDING)
+  verifiedAt         DateTime?
+  verifiedById       String? // admin user id, informational only, no relation enforced
+
+  bio             String?
+  skills          ServiceCategory[] @default([])
+  customSkills    String[]          @default([]) // free-text skills alongside the ServiceCategory enum
+  yearsExperience Int?
+
+  isOnline          Boolean @default(false)
+  serviceRadiusKm   Float   @default(10)
+  workingDays       Int[]   @default([1, 2, 3, 4, 5, 6]) // 0=Sun..6=Sat
+  workingHoursStart String? // "08:00"
+  workingHoursEnd   String? // "18:00"
+
+  ratingAverage      Float @default(0)
+  ratingCount        Int   @default(0)
+  jobsCompletedCount Int   @default(0)
+  responseRate       Float @default(0) // rolling %
+
+  // Subscription is derived: if companyId set, look at Company's active Subscription.
+  // If companyId is null, plumber operates subscription-free (MVP policy).
+  individualSubscriptionStatus SubscriptionStatus @default(NONE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  currentLocation  PlumberLocation?
+  bookings         Booking[]
+  reviewsReceived  Review[]          @relation("PlumberReviews")
+  disputesAgainst  Dispute[]         @relation("PlumberDisputes")
+  jobOffers        JobOffer[]
+  earningsEntries  EarningsEntry[]
+  deliveryRequests DeliveryRequest[] @relation("PlumberDeliveryRequests")
+
+  @@index([verificationStatus])
+  @@index([isOnline])
+}
+
+model PlumberLocation {
+  id        String         @id @default(cuid())
+  plumberId String         @unique
+  plumber   PlumberProfile @relation(fields: [plumberId], references: [id], onDelete: Cascade)
+  latitude  Float
+  longitude Float
+  heading   Float?
+  updatedAt DateTime       @updatedAt
+
+  // Geo index added via raw SQL migration using PostGIS geography(Point,4326) generated column
+}
+
+// PARTNER
+
+model PartnerProfile {
+  id                 String             @id @default(cuid())
+  userId             String             @unique
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessName       String
+  category           String // "supplier" | "financier" | "training_provider"
+  location           String?
+  logoUrl            String?
+  verificationStatus VerificationStatus @default(PENDING)
+  createdAt          DateTime           @default(now())
+
+  products        Product[]
+  trainingContent TrainingContent[]
+}
+
+enum AdminPermission {
+  MANAGE_ADMINS
+  VIEW_USERS
+  EDIT_USERS
+  BAN_USERS
+  APPROVE_PLUMBER_KYC
+  APPROVE_PARTNER_KYC
+  MODERATE_PRODUCTS
+  MODERATE_CAMPAIGNS
+  MODERATE_TRAINING_CONTENT
+  MANAGE_BILLING_PRICING
+  VIEW_BILLING
+  RESOLVE_CONCERNS
+  VIEW_ANALYTICS
+  SEND_COMMUNICATIONS
+  MANAGE_CMS
+}
+
+model AdminProfile {
+  id           String            @id @default(cuid())
+  userId       String            @unique
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isSuperAdmin Boolean           @default(false) // bypasses permission checks entirely
+  permissions  AdminPermission[] @default([])
+  invitedById  String?
+  isActive     Boolean           @default(true) // deactivated != deleted, preserves audit history
+  createdAt    DateTime          @default(now())
+}
+
+// The invited admin sets their own password on first login via this token —
+// there's no self-registration path for admin accounts (see docs/06).
+model AdminInvite {
+  id          String            @id @default(cuid())
+  name        String
+  email       String?
+  phone       String?
+  permissions AdminPermission[]
+  invitedById String
+  token       String            @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime          @default(now())
+
+  @@index([token])
+}
+
+// SUBSCRIPTIONS
+
+model SubscriptionPlan {
+  id               String                @id @default(cuid())
+  name             String // "Basic", "Pro", "Company"
+  ownerType        SubscriptionOwnerType
+  billingCycle     BillingCycle
+  priceKes         Int
+  jobLeadsPerMonth Int? // null = unlimited
+  features         String[]              @default([])
+  isActive         Boolean               @default(true)
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id          String             @id @default(cuid())
+  companyId   String?
+  company     Company?           @relation(fields: [companyId], references: [id])
+  planId      String
+  plan        SubscriptionPlan   @relation(fields: [planId], references: [id])
+  status      SubscriptionStatus @default(ACTIVE)
+  startDate   DateTime           @default(now())
+  endDate     DateTime
+  autoRenew   Boolean            @default(true)
+  cancelledAt DateTime?
+  createdAt   DateTime           @default(now())
+
+  payments Payment[]
+
+  @@index([companyId, status])
+}
+
+// BOOKINGS
+
+model Booking {
+  id         String          @id @default(cuid())
+  customerId String
+  customer   CustomerProfile @relation(fields: [customerId], references: [id])
+  plumberId  String?
+  plumber    PlumberProfile? @relation(fields: [plumberId], references: [id])
+
+  category     ServiceCategory
+  subCategory  String? // "Tap / Faucet", "Burst Pipe" etc, free-text under category
+  description  String?
+  photoUrls    String[]        @default([])
+  voiceNoteUrl String?
+
+  address     String
+  latitude    Float
+  longitude   Float
+  preferredAt DateTime? // null = ASAP
+  isAsap      Boolean   @default(true)
+
+  status             BookingStatus @default(REQUESTED)
+  requestedPlumberId String? // set if customer picked a specific plumber (Story 3/5)
+
+  agreementConfirmedByCustomer Boolean   @default(false)
+  agreementConfirmedByPlumber  Boolean   @default(false)
+  agreementConfirmedAt         DateTime?
+  // Deliberately NO price/amount field here — PRD requires the app never stores the
+  // negotiated price. Only a boolean "agreement reached" + optional self-reported
+  // EarningsEntry after the fact (see below), which is separate from booking data.
+
+  cancelledAt     DateTime?
+  cancelledReason String?
+  completedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  statusLogs    BookingStatusLog[]
+  offers        JobOffer[]
+  messages      Message[]
+  review        Review?
+  dispute       Dispute?
+  earningsEntry EarningsEntry?
+  paymentRecord PaymentRecord?
+
+  @@index([status])
+  @@index([customerId])
+  @@index([plumberId])
+}
+
+model BookingStatusLog {
+  id        String        @id @default(cuid())
+  bookingId String
+  booking   Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  status    BookingStatus
+  latitude  Float?
+  longitude Float?
+  note      String?
+  createdAt DateTime      @default(now())
+
+  @@index([bookingId])
+}
+
+// Job matching: a booking can be offered to multiple plumbers sequentially/in parallel;
+// JobOffer tracks each individual offer + response for the matching engine and analytics.
+model JobOffer {
+  id          String         @id @default(cuid())
+  bookingId   String
+  booking     Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  plumberId   String
+  plumber     PlumberProfile @relation(fields: [plumberId], references: [id])
+  distanceKm  Float?
+  status      String         @default("PENDING") // PENDING | ACCEPTED | DECLINED | TIMED_OUT
+  offeredAt   DateTime       @default(now())
+  respondedAt DateTime?
+
+  @@index([bookingId])
+  @@index([plumberId, status])
+}
+
+// Self-reported payment record for a completed job (per PRD P018/C010 — no price stored
+// on Booking itself, but the parties can log that payment happened + method, for the
+// plumber's earnings tracker and for dispute evidence).
+model PaymentRecord {
+  id                    String          @id @default(cuid())
+  bookingId             String          @unique
+  booking               Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  amountKes             Int
+  method                PaymentProvider
+  reportedByPlumberAt   DateTime?
+  confirmedByCustomerAt DateTime?
+  disputedAt            DateTime?
+  createdAt             DateTime        @default(now())
+}
+
+model EarningsEntry {
+  id        String         @id @default(cuid())
+  plumberId String
+  plumber   PlumberProfile @relation(fields: [plumberId], references: [id])
+  bookingId String?        @unique
+  booking   Booking?       @relation(fields: [bookingId], references: [id])
+  amountKes Int
+  tipKes    Int            @default(0)
+  note      String?
+  createdAt DateTime       @default(now())
+
+  @@index([plumberId])
+}
+
+// CHAT
+
+model Message {
+  id            String    @id @default(cuid())
+  bookingId     String
+  booking       Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  senderId      String
+  sender        User      @relation("SentMessages", fields: [senderId], references: [id])
+  body          String?
+  attachmentUrl String?
+  readAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([bookingId, createdAt])
+}
+
+// Booking-independent counterpart to `Message` — see `ConversationType` doc
+// comment. `userAId`/`userBId` have no fixed customer/plumber/supplier
+// meaning (order is just "however the conversation was first created");
+// authorization checks `requester.userId` against both. `productId` is
+// optional context for CUSTOMER_SUPPLIER conversations started from a
+// specific product page — not used for the other types.
+model Conversation {
+  id        String           @id @default(cuid())
+  type      ConversationType
+  userAId   String
+  userA     User             @relation("ConversationsAsUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userBId   String
+  userB     User             @relation("ConversationsAsUserB", fields: [userBId], references: [id], onDelete: Cascade)
+  productId String?
+  product   Product?         @relation(fields: [productId], references: [id])
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  messages ConversationMessage[]
+
+  @@index([userAId])
+  @@index([userBId])
+}
+
+model ConversationMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation("SentConversationMessages", fields: [senderId], references: [id])
+  body           String?
+  attachmentUrl  String?
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// RATINGS
+
+model Review {
+  id         String          @id @default(cuid())
+  bookingId  String          @unique
+  booking    Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  reviewerId String
+  reviewer   CustomerProfile @relation("CustomerReviews", fields: [reviewerId], references: [id])
+  plumberId  String
+  plumber    PlumberProfile  @relation("PlumberReviews", fields: [plumberId], references: [id])
+
+  punctualityRating     Int // 1-5
+  professionalismRating Int
+  qualityRating         Int
+  valueRating           Int
+  comment               String?
+  isModerated           Boolean  @default(false)
+  isVisible             Boolean  @default(true)
+  createdAt             DateTime @default(now())
+
+  @@index([plumberId])
+}
+
+// DISPUTES
+
+model Dispute {
+  id         String          @id @default(cuid())
+  bookingId  String          @unique
+  booking    Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  reporterId String
+  reporter   CustomerProfile @relation("CustomerDisputes", fields: [reporterId], references: [id])
+  plumberId  String
+  plumber    PlumberProfile  @relation("PlumberDisputes", fields: [plumberId], references: [id])
+
+  reason         DisputeReason
+  description    String
+  photoUrls      String[]      @default([])
+  status         ConcernStatus @default(OPEN)
+  resolutionNote String?
+  resolvedAt     DateTime?
+  resolvedById   String? // admin user id
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+model ProductConcern {
+  id                String           @id @default(cuid())
+  productId         String
+  product           Product          @relation(fields: [productId], references: [id])
+  deliveryRequestId String?
+  deliveryRequest   DeliveryRequest? @relation(fields: [deliveryRequestId], references: [id])
+  reporterId        String // User.id — a CUSTOMER or PLUMBER, either can report
+  reporterRole      Role
+  reason            ProductConcernReason
+  description       String
+  photoUrls         String[]         @default([])
+  status            ConcernStatus    @default(OPEN)
+  resolutionNote    String?
+  resolvedAt        DateTime?
+  resolvedById      String? // admin user id
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@index([status])
+  @@index([productId])
+}
+
+// PARTNER ADS / PRODUCTS
+
+model Product {
+  id          String            @id @default(cuid())
+  partnerId   String
+  partner     PartnerProfile    @relation(fields: [partnerId], references: [id])
+  name        String
+  description String?
+  priceKes    Int?
+  imageUrl    String? // first of imageUrls — kept in sync for Ad/DeliveryRequest/partner list thumbnails
+  imageUrls   String[]          @default([]) // up to 4, full gallery for the product detail page
+  locationAddress String?
+  category    ServiceCategory[] @default([]) // which job categories trigger this ad
+  status      ProductStatus     @default(DRAFT)
+  stockStatus String            @default("in_stock") // "in_stock" | "out_of_stock"
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  ads              Ad[]
+  deliveryRequests DeliveryRequest[]
+  conversations    Conversation[]
+  concerns         ProductConcern[]
+}
+
+model Ad {
+  id              String       @id @default(cuid())
+  productId       String
+  product         Product      @relation(fields: [productId], references: [id])
+  actionType      AdActionType
+  externalUrl     String?
+  targetLocations String[]     @default([]) // county/city names, empty = nationwide
+  targetAudience  Role[]       @default([CUSTOMER, PLUMBER])
+  startDate       DateTime
+  endDate         DateTime
+  impressions     Int          @default(0)
+  clicks          Int          @default(0)
+  isApproved      Boolean      @default(false)
+  approvedById    String?
+  createdAt       DateTime     @default(now())
+
+  // Partner portal billing (docs/05): flat fee per campaign, charged only
+  // after admin approval — see conversations.service.ts-style flow notes in
+  // the partner portal doc for why payment isn't collected at submission
+  // time. `isActive` (not just `isApproved`) gates whether the ad actually
+  // serves — true only once payment succeeds too.
+  //
+  // billingAmountKes is always server-computed (AdPricingRate.priceKes ×
+  // number of billingInterval units between startDate/endDate) at creation
+  // time — never a partner-supplied figure. The @default here exists only so
+  // the migration adding this column to a non-empty Ad table doesn't fail;
+  // every new row always sets it explicitly via createAd's validation.
+  billingInterval  AdBillingInterval @default(MONTHLY)
+  billingAmountKes Int?
+  paymentId        String?        @unique
+  payment          Payment?       @relation(fields: [paymentId], references: [id])
+  isActive         Boolean        @default(false)
+
+  events AdEvent[]
+
+  @@index([isApproved, startDate, endDate])
+}
+
+// Daily-bucketed source for the campaign analytics chart (docs/05 section
+// 5.6) — `Ad.impressions`/`clicks` stay as fast denormalized lifetime
+// totals (incremented alongside each event insert here), this is what lets
+// the chart show a trend instead of just a running total.
+model AdEvent {
+  id        String   @id @default(cuid())
+  adId      String
+  ad        Ad       @relation(fields: [adId], references: [id], onDelete: Cascade)
+  type      String // "IMPRESSION" | "CLICK" | "DELIVERY_REQUEST"
+  userRole  Role?
+  createdAt DateTime @default(now())
+
+  @@index([adId, type, createdAt])
+}
+
+enum TrainingContentStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+enum TrainingCategory {
+  SAFETY
+  TECHNIQUES
+  CUSTOMER_SERVICE
+  BUSINESS
+}
+
+// Only APPROVED content is ever returned by the public/plumber-facing
+// GET /training/content — partners see their own submissions regardless of
+// status on their own dashboard (GET /partners/me/training-content).
+model TrainingContent {
+  id               String                 @id @default(cuid())
+  partnerId        String?
+  partner          PartnerProfile?        @relation(fields: [partnerId], references: [id])
+  createdByAdminId String? // set if Admin authored it directly instead of a partner
+  title            String
+  description      String?
+  category         TrainingCategory
+  videoUrl         String?
+  videoFileUrl     String?
+  guidePdfUrl      String?
+  downloadable     Boolean                @default(false)
+  status           TrainingContentStatus  @default(PENDING_APPROVAL)
+  rejectionReason  String?
+  viewCount        Int                    @default(0)
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  @@index([status])
+  @@index([category])
+}
+
+model DeliveryRequest {
+  id           String                @id @default(cuid())
+  productId    String
+  product      Product               @relation(fields: [productId], references: [id])
+  customerId   String?
+  customer     CustomerProfile?      @relation("CustomerDeliveryRequests", fields: [customerId], references: [id])
+  plumberId    String?
+  plumber      PlumberProfile?       @relation("PlumberDeliveryRequests", fields: [plumberId], references: [id])
+  quantity     Int                   @default(1)
+  address      String
+  contactPhone String
+  preferredAt  DateTime?
+  status       DeliveryRequestStatus @default(PENDING)
+  createdAt    DateTime              @default(now())
+
+  concerns ProductConcern[]
+}
+
+// PAYMENTS (generic ledger — subscriptions, ads, wraps Daraja txns)
+
+model Payment {
+  id                     String          @id @default(cuid())
+  userId                 String // payer
+  type                   PaymentType
+  provider               PaymentProvider
+  amountKes              Int
+  status                 PaymentStatus   @default(PENDING)
+  subscriptionId         String?
+  subscription           Subscription?   @relation(fields: [subscriptionId], references: [id])
+  mpesaCheckoutRequestId String?         @unique
+  mpesaReceiptNumber     String?         @unique
+  rawCallbackPayload     Json?
+  failureReason          String?
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+
+  ad Ad?
+
+  @@index([userId])
+  @@index([status])
+}
+
+// NOTIFICATIONS
+
+model Notification {
+  id        String              @id @default(cuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  channel   NotificationChannel
+  data      Json? // deep link payload, e.g. {"bookingId": "..."}
+  readAt    DateTime?
+  sentAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  @@index([userId, readAt])
+}
+
+// ADMIN
+
+model AdminAuditLog {
+  id         String   @id @default(cuid())
+  actorId    String
+  actor      User     @relation("ActorAuditLogs", fields: [actorId], references: [id])
+  action     String // "APPROVE_KYC", "BAN_USER", "RESOLVE_DISPUTE", ...
+  targetType String // "User" | "Dispute" | "Product" ...
+  targetId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetId])
+}
+
+// CMS (docs/06 section 4.10) — FAQ entries and app-copy strings, admin-editable.
+// Training categories are deliberately NOT modeled as a DB table here: the
+// mobile app's UI assumes the fixed 4-value `TrainingCategory` enum, so
+// turning that into a free-form reorderable list would be a client-breaking
+// change out of scope for this pass — see the CMS page for the note.
+model FaqEntry {
+  id        String   @id @default(cuid())
+  question  String
+  answer    String
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([order])
+}
+
+model AppCopyEntry {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
