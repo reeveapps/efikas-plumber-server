@@ -1,10 +1,10 @@
 import { Role } from '@prisma/client';
 import { prisma } from '../../db/index.js';
 import { createError } from '../../middleware/error.middleware.js';
-import { generateOtpCode, hashOtpCode, compareOtpCode } from '../../utils/otp.js';
-import { sendSms } from '../../utils/sms.js';
+import { sendOtp as sendTwilioOtp, verifyOtp as verifyTwilioOtp } from '../../utils/twilio-otp.js';
 import formatPhoneNumber from '../../utils/formatPhoneNumber.js';
-import { OTP_EXPIRY_SECONDS } from '../../config/constants.js';
+
+const toE164 = (phone: string): string => `+${phone}`;
 
 const PROFILE_INCLUDE_BY_ROLE: Record<Role, Record<string, true>> = {
   [Role.CUSTOMER]: { customerProfile: true },
@@ -48,40 +48,28 @@ export async function changePhone(
       throw createError('An account already exists with this phone number', 409);
     }
 
-    const otpCode = generateOtpCode();
-    const codeHash = await hashOtpCode(otpCode);
-    await prisma.otpCode.create({
-      data: {
-        userId,
-        code: codeHash,
-        channel: 'SMS',
-        purpose: 'phone_change',
-        expiresAt: new Date(Date.now() + OTP_EXPIRY_SECONDS * 1000),
-      },
-    });
-    await sendSms(normalizedPhone, `Your Plumbers verification code is ${otpCode}. It expires in 10 minutes.`);
+    try {
+      await sendTwilioOtp(toE164(normalizedPhone));
+    } catch (err) {
+      throw createError('Failed to send verification code. Please try again.', 502);
+    }
     return { otpSent: true };
   }
 
-  const otp = await prisma.otpCode.findFirst({
-    where: { userId, purpose: 'phone_change', consumedAt: null },
-    orderBy: { createdAt: 'desc' },
-  });
-  if (!otp || otp.expiresAt < new Date()) throw createError('No pending OTP found. Please request a new code.', 400);
-
-  const isValid = await compareOtpCode(code, otp.code);
-  if (!isValid) {
-    await prisma.otpCode.update({ where: { id: otp.id }, data: { attempts: { increment: 1 } } });
+  let check: Awaited<ReturnType<typeof verifyTwilioOtp>>;
+  try {
+    check = await verifyTwilioOtp(toE164(normalizedPhone), code);
+  } catch (err) {
+    throw createError('No pending OTP found. Please request a new code.', 400);
+  }
+  if (check.status !== 'approved') {
     throw createError('Incorrect code', 400);
   }
 
-  await prisma.$transaction([
-    prisma.otpCode.update({ where: { id: otp.id }, data: { consumedAt: new Date() } }),
-    prisma.user.update({
-      where: { id: userId },
-      data: { phone: normalizedPhone, phoneVerifiedAt: new Date() },
-    }),
-  ]);
+  await prisma.user.update({
+    where: { id: userId },
+    data: { phone: normalizedPhone, phoneVerifiedAt: new Date() },
+  });
 
   return { phone: normalizedPhone };
 }

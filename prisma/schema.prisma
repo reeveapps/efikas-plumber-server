@@ -215,9 +215,9 @@ model User {
   sentMessages  Message[]       @relation("SentMessages")
   auditLogs     AdminAuditLog[] @relation("ActorAuditLogs")
 
-  conversationsAsUserA  Conversation[]        @relation("ConversationsAsUserA")
-  conversationsAsUserB  Conversation[]        @relation("ConversationsAsUserB")
-  sentConversationMsgs  ConversationMessage[] @relation("SentConversationMessages")
+  conversationsAsUserA Conversation[]        @relation("ConversationsAsUserA")
+  conversationsAsUserB Conversation[]        @relation("ConversationsAsUserB")
+  sentConversationMsgs ConversationMessage[] @relation("SentConversationMessages")
 
   @@index([role])
 }
@@ -317,11 +317,11 @@ model PlumberProfile {
   // screen), deliberately NOT wired into Company/ServiceManagerProfile at
   // all to avoid conflating two different products. `companyOwnerId` is set
   // only on plumbers added via the roster (add-one or CSV bulk upload).
-  accountType      PlumberAccountType @default(INDIVIDUAL)
+  accountType       PlumberAccountType @default(INDIVIDUAL)
   businessRegNumber String?
-  companyOwnerId   String?
-  companyOwner     PlumberProfile?    @relation("PlumberTeamRoster", fields: [companyOwnerId], references: [id])
-  teamMembers      PlumberProfile[]   @relation("PlumberTeamRoster")
+  companyOwnerId    String?
+  companyOwner      PlumberProfile?    @relation("PlumberTeamRoster", fields: [companyOwnerId], references: [id])
+  teamMembers       PlumberProfile[]   @relation("PlumberTeamRoster")
 
   idNumber           String?
   idDocumentUrl      String?
@@ -688,22 +688,22 @@ model Dispute {
 }
 
 model ProductConcern {
-  id                String           @id @default(cuid())
+  id                String               @id @default(cuid())
   productId         String
-  product           Product          @relation(fields: [productId], references: [id])
+  product           Product              @relation(fields: [productId], references: [id])
   deliveryRequestId String?
-  deliveryRequest   DeliveryRequest? @relation(fields: [deliveryRequestId], references: [id])
+  deliveryRequest   DeliveryRequest?     @relation(fields: [deliveryRequestId], references: [id])
   reporterId        String // User.id — a CUSTOMER or PLUMBER, either can report
   reporterRole      Role
   reason            ProductConcernReason
   description       String
-  photoUrls         String[]         @default([])
-  status            ConcernStatus    @default(OPEN)
+  photoUrls         String[]             @default([])
+  status            ConcernStatus        @default(OPEN)
   resolutionNote    String?
   resolvedAt        DateTime?
   resolvedById      String? // admin user id
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
 
   @@index([status])
   @@index([productId])
@@ -712,20 +712,20 @@ model ProductConcern {
 // PARTNER ADS / PRODUCTS
 
 model Product {
-  id          String            @id @default(cuid())
-  partnerId   String
-  partner     PartnerProfile    @relation(fields: [partnerId], references: [id])
-  name        String
-  description String?
-  priceKes    Int?
-  imageUrl    String? // first of imageUrls — kept in sync for Ad/DeliveryRequest/partner list thumbnails
-  imageUrls   String[]          @default([]) // up to 4, full gallery for the product detail page
+  id              String            @id @default(cuid())
+  partnerId       String
+  partner         PartnerProfile    @relation(fields: [partnerId], references: [id])
+  name            String
+  description     String?
+  priceKes        Int?
+  imageUrl        String?
+  imageUrls       String[]          @default([])
   locationAddress String?
-  category    ServiceCategory[] @default([]) // which job categories trigger this ad
-  status      ProductStatus     @default(DRAFT)
-  stockStatus String            @default("in_stock") // "in_stock" | "out_of_stock"
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  category        ServiceCategory[] @default([])
+  status          ProductStatus     @default(DRAFT)
+  stockStatus     String            @default("in_stock")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
 
   ads              Ad[]
   deliveryRequests DeliveryRequest[]
@@ -762,9 +762,9 @@ model Ad {
   // every new row always sets it explicitly via createAd's validation.
   billingInterval  AdBillingInterval @default(MONTHLY)
   billingAmountKes Int?
-  paymentId        String?        @unique
-  payment          Payment?       @relation(fields: [paymentId], references: [id])
-  isActive         Boolean        @default(false)
+  paymentId        String?           @unique
+  payment          Payment?          @relation(fields: [paymentId], references: [id])
+  isActive         Boolean           @default(false)
 
   events AdEvent[]
 
@@ -803,9 +803,9 @@ enum TrainingCategory {
 // GET /training/content — partners see their own submissions regardless of
 // status on their own dashboard (GET /partners/me/training-content).
 model TrainingContent {
-  id               String                 @id @default(cuid())
+  id               String                @id @default(cuid())
   partnerId        String?
-  partner          PartnerProfile?        @relation(fields: [partnerId], references: [id])
+  partner          PartnerProfile?       @relation(fields: [partnerId], references: [id])
   createdByAdminId String? // set if Admin authored it directly instead of a partner
   title            String
   description      String?
@@ -813,12 +813,12 @@ model TrainingContent {
   videoUrl         String?
   videoFileUrl     String?
   guidePdfUrl      String?
-  downloadable     Boolean                @default(false)
-  status           TrainingContentStatus  @default(PENDING_APPROVAL)
+  downloadable     Boolean               @default(false)
+  status           TrainingContentStatus @default(PENDING_APPROVAL)
   rejectionReason  String?
-  viewCount        Int                    @default(0)
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  viewCount        Int                   @default(0)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
 
   @@index([status])
   @@index([category])

@@ -14,7 +14,6 @@ import {
 } from '../../utils/jwt.js';
 import { generateOtpCode, hashOtpCode, compareOtpCode } from '../../utils/otp.js';
 import { sendOtp as sendTwilioOtp, verifyOtp as verifyTwilioOtp } from '../../utils/twilio-otp.js';
-import { sendSms } from '../../utils/sms.js';
 import { sendEmail } from '../../utils/email.js';
 import { sendTwoFactorCodeEmail } from '../../utils/email/index.js';
 import { verifyGoogleIdToken, verifyAppleIdToken } from '../../utils/oauth.js';
@@ -166,40 +165,28 @@ export async function upgradeGuest(
       throw createError('An account already exists with this phone number', 409);
     }
 
-    const otpCode = generateOtpCode();
-    const codeHash = await hashOtpCode(otpCode);
-    await prisma.otpCode.create({
-      data: {
-        userId: user.id,
-        code: codeHash,
-        channel: 'SMS',
-        purpose: 'guest_upgrade',
-        expiresAt: new Date(Date.now() + OTP_EXPIRY_SECONDS * 1000),
-      },
-    });
-    await sendSms(normalizedPhone, `Your Plumbers verification code is ${otpCode}. It expires in 10 minutes.`);
+    try {
+      await sendTwilioOtp(toE164(normalizedPhone));
+    } catch (err) {
+      throw createError('Failed to send verification code. Please try again.', 502);
+    }
     return { otpSent: true };
   }
 
-  const otp = await prisma.otpCode.findFirst({
-    where: { userId: user.id, purpose: 'guest_upgrade', consumedAt: null },
-    orderBy: { createdAt: 'desc' },
-  });
-  if (!otp || otp.expiresAt < new Date()) throw createError('No pending OTP found. Please request a new code.', 400);
-
-  const isValid = await compareOtpCode(code, otp.code);
-  if (!isValid) {
-    await prisma.otpCode.update({ where: { id: otp.id }, data: { attempts: { increment: 1 } } });
+  let check: Awaited<ReturnType<typeof verifyTwilioOtp>>;
+  try {
+    check = await verifyTwilioOtp(toE164(normalizedPhone), code);
+  } catch (err) {
+    throw createError('No pending OTP found. Please request a new code.', 400);
+  }
+  if (check.status !== 'approved') {
     throw createError('Incorrect code', 400);
   }
 
-  await prisma.$transaction([
-    prisma.otpCode.update({ where: { id: otp.id }, data: { consumedAt: new Date() } }),
-    prisma.user.update({
-      where: { id: user.id },
-      data: { phone: normalizedPhone, phoneVerifiedAt: new Date(), isGuest: false },
-    }),
-  ]);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { phone: normalizedPhone, phoneVerifiedAt: new Date(), isGuest: false },
+  });
 
   const tokens = await issueTokens(user.id, user.role);
   return { tokens };
