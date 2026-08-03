@@ -156,7 +156,17 @@ export async function onboardPlumber(
 export async function getOwnProfile(plumberId: string) {
   const profile = await prisma.plumberProfile.findUnique({
     where: { id: plumberId },
-    include: { company: true, currentLocation: true, user: { select: { name: true, avatarUrl: true, phone: true, email: true } } },
+    include: {
+      company: true,
+      currentLocation: true,
+      user: { select: { name: true, avatarUrl: true, phone: true, email: true } },
+      // The roster owner (a COMPANY-type plumber) this plumber was added
+      // under via "Manage Team" — distinct from `company` above (the real,
+      // service-manager-owned Company). A team member's own accountType is
+      // always INDIVIDUAL, so `companyOwner` is the only signal that they're
+      // actually affiliated with someone's team roster.
+      companyOwner: { select: { id: true, user: { select: { name: true } } } },
+    },
   });
   if (!profile) throw createError('Plumber profile not found', 404);
   return profile;
