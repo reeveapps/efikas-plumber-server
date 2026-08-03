@@ -11,6 +11,10 @@ export const OTP_REQUEST_RATE_LIMIT_PER_HOUR = 10;
 export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 100;
 
-// Job matching (see jobs/matching.cron.ts)
-export const JOB_OFFER_TIMEOUT_SECONDS = 60;
+// Job matching (see jobs/matching.cron.ts) — an offer only times out this
+// long after being sent with no response; it's superseded immediately
+// (regardless of this window) the moment it's accepted, another plumber is
+// assigned, or the booking is cancelled — see acceptJobOffer,
+// assignBookingToPlumber, selectPlumber, and cancelBooking.
+export const JOB_OFFER_TIMEOUT_SECONDS = 20 * 24 * 60 * 60; // 20 days
 export const JOB_OFFER_MAX_CANDIDATES = 5;
