@@ -280,7 +280,7 @@ export async function listPendingKyc(cursor: string | undefined, limit: number) 
     orderBy: { id: 'asc' },
     include: {
       user: { select: { name: true, phone: true } },
-      company: { select: { name: true } },
+      company: { select: { name: true, registrationNumber: true } },
     },
     ...(cursorArgs(cursor, limit) as CursorArgs),
   });
@@ -288,15 +288,40 @@ export async function listPendingKyc(cursor: string | undefined, limit: number) 
   return paginateResults(rows, limit);
 }
 
+// Approving a company-affiliated plumber approves every plumber under that
+// same Company in one action, not just the row that was clicked — a company
+// isn't meaningfully "half verified", and there's no separate per-company
+// approval screen, so this is the only trigger point for it.
 export async function approveKyc(actorId: string, plumberId: string) {
   const plumber = await prisma.plumberProfile.findUnique({ where: { id: plumberId } });
   if (!plumber) throw createError('Plumber profile not found', 404);
+
+  const now = new Date();
+
+  if (plumber.companyId) {
+    const [, updated] = await prisma.$transaction([
+      prisma.company.update({
+        where: { id: plumber.companyId },
+        data: { verificationStatus: VerificationStatus.APPROVED },
+      }),
+      prisma.plumberProfile.updateMany({
+        where: { companyId: plumber.companyId, verificationStatus: { not: VerificationStatus.APPROVED } },
+        data: { verificationStatus: VerificationStatus.APPROVED, verifiedAt: now, verifiedById: actorId },
+      }),
+    ]);
+
+    await logAdminAction(actorId, 'APPROVE_KYC', 'Company', plumber.companyId, {
+      approvedPlumberCount: updated.count,
+    });
+
+    return prisma.plumberProfile.findUniqueOrThrow({ where: { id: plumberId } });
+  }
 
   const updated = await prisma.plumberProfile.update({
     where: { id: plumberId },
     data: {
       verificationStatus: VerificationStatus.APPROVED,
-      verifiedAt: new Date(),
+      verifiedAt: now,
       verifiedById: actorId,
     },
   });
