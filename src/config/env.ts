@@ -23,12 +23,11 @@ export const env = {
   MPESA_PASSKEY: process.env.MPESA_PASSKEY || '',
   MPESA_CALLBACK_URL: process.env.MPESA_CALLBACK_URL || '',
 
-  SMTP_HOST: process.env.SMTP_HOST || 'smtp.gmail.com',
-  SMTP_PORT: parseInt(process.env.SMTP_PORT || '587', 10),
-  SMTP_SECURE: process.env.SMTP_SECURE === 'true',
-  SMTP_USER: process.env.SMTP_USER || '',
-  SMTP_PASS: process.env.SMTP_PASS || '',
-  SMTP_FROM_EMAIL: process.env.SMTP_FROM_EMAIL || 'Plumbers <noreply@plumbers.app>',
+  // Brevo transactional email API — HTTP-based (not SMTP), since SMTP ports
+  // are blocked outbound on Railway and most PaaS hosts regardless of config.
+  BREVO_API_KEY: process.env.BREVO_API_KEY || '',
+  BREVO_SENDER_EMAIL: process.env.BREVO_SENDER_EMAIL || 'noreply@plumbers.app',
+  BREVO_SENDER_NAME: process.env.BREVO_SENDER_NAME || 'Plumbers',
   JWT_RESET_SECRET: process.env.JWT_RESET_SECRET || 'jwt-reset-secret-change-in-prod',
  //For whatsapp
   META_API_TOKEN: process.env.META_API_TOKEN || '',

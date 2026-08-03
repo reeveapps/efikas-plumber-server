@@ -10,11 +10,11 @@ import { initSocket } from './realtime/socket.js';
 
 // Some hosts (Railway's Docker containers among them) have no IPv6 egress,
 // but Node's default DNS lookup order can still return/prefer an AAAA record
-// for dual-stack hosts like smtp.gmail.com — that connects nowhere and hangs
-// until ENETUNREACH. This forces every dns.lookup() in the process (not just
-// nodemailer's) to try A/IPv4 records first, which is a more reliable fix
-// than any single library's own `family` option — see utils/email.ts's
-// transport config, which was insufficient by itself on Alpine/musl.
+// for a dual-stack hostname — that connects nowhere and hangs until
+// ENETUNREACH. Forces every dns.lookup() in the process to try A/IPv4
+// records first, as a general safety net for any outbound call (email now
+// goes over Brevo's HTTPS API instead of SMTP, but Twilio/R2/Daraja calls
+// could hit the same dual-stack issue).
 dns.setDefaultResultOrder('ipv4first');
 
 const httpServer = http.createServer(app);
