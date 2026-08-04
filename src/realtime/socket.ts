@@ -89,6 +89,26 @@ export function initSocket(httpServer: HttpServer): Server {
     socket.on('conversation:leave', (conversationId: string) => {
       socket.leave(conversationRoom(conversationId));
     });
+
+    // Same room as chat:join (both key off bookingId), kept as a distinct
+    // event so a customer's live-tracking screen can subscribe to location
+    // updates without also joining chat, and vice versa.
+    socket.on('location:join', async (bookingId: string) => {
+      try {
+        const booking = await prisma.booking.findUnique({
+          where: { id: bookingId },
+          select: { customerId: true, plumberId: true },
+        });
+        if (!booking || !isParticipant(booking, user)) return;
+        socket.join(bookingRoom(bookingId));
+      } catch (err) {
+        console.error('[Socket] location:join failed:', err);
+      }
+    });
+
+    socket.on('location:leave', (bookingId: string) => {
+      socket.leave(bookingRoom(bookingId));
+    });
   });
 
   return io;
@@ -115,4 +135,16 @@ export function emitNewMessage(bookingId: string, message: unknown, recipientUse
 export function emitNewConversationMessage(conversationId: string, message: unknown, recipientUserId: string): void {
   io?.to(conversationRoom(conversationId)).emit('conversation:message', message);
   io?.to(userRoom(recipientUserId)).emit('conversation:unread', { conversationId });
+}
+
+/// Broadcasts a plumber's live position to everyone in that booking's room
+/// (the customer's open LiveTrackingScreen). Called from
+/// plumbers.service.ts's `upsertLocation` whenever the push includes a
+/// bookingId — i.e. only while the plumber has an active job open, not the
+/// general "am I online" location ping.
+export function emitPlumberLocation(
+  bookingId: string,
+  location: { latitude: number; longitude: number; heading?: number }
+): void {
+  io?.to(bookingRoom(bookingId)).emit('location:update', { bookingId, ...location });
 }

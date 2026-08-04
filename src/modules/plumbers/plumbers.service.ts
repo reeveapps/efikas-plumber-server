@@ -6,6 +6,7 @@ import { cursorArgs, paginateResults } from '../../utils/pagination.js';
 import { sendPush } from '../../utils/push.js';
 import { uploadToR2, UploadedFile } from '../../utils/r2.js';
 import formatPhoneNumber from '../../utils/formatPhoneNumber.js';
+import { emitPlumberLocation } from '../../realtime/socket.js';
 
 // Public-safe fields only — never expose idNumber/idDocumentUrl/certificateUrls/businessRegUrl.
 const PLUMBER_PUBLIC_SELECT = {
@@ -192,12 +193,36 @@ export async function updateAvailability(
   return prisma.plumberProfile.update({ where: { id: plumberId }, data });
 }
 
-export async function upsertLocation(plumberId: string, data: { latitude: number; longitude: number; heading?: number }) {
-  return prisma.plumberLocation.upsert({
+const TERMINAL_BOOKING_STATUSES = new Set(['COMPLETED', 'CANCELLED', 'DISPUTED', 'EXPIRED']);
+
+// `bookingId` is optional — the general "am I online" ping from the Map tab
+// (browsing nearby jobs) omits it and only ever updates PlumberLocation for
+// the discovery bounding-box query. Passing it (from ActiveJobScreen while a
+// job is accepted/en route/etc.) additionally broadcasts the position live
+// to that booking's room, for the customer's LiveTrackingScreen — this is
+// deliberately checked server-side (not trusted from the client) so a
+// plumber can't push location updates to a booking that isn't theirs or has
+// already finished.
+export async function upsertLocation(
+  plumberId: string,
+  data: { latitude: number; longitude: number; heading?: number; bookingId?: string }
+) {
+  const { bookingId, ...location } = data;
+
+  const updated = await prisma.plumberLocation.upsert({
     where: { plumberId },
-    create: { plumberId, ...data },
-    update: data,
+    create: { plumberId, ...location },
+    update: location,
   });
+
+  if (bookingId) {
+    const booking = await prisma.booking.findUnique({ where: { id: bookingId }, select: { plumberId: true, status: true } });
+    if (booking && booking.plumberId === plumberId && !TERMINAL_BOOKING_STATUSES.has(booking.status)) {
+      emitPlumberLocation(bookingId, location);
+    }
+  }
+
+  return updated;
 }
 
 export async function getJobFeed(plumberId: string, cursor: string | undefined, limit: number) {

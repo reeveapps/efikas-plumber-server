@@ -68,6 +68,10 @@ export const updateLocationSchema = z.object({
   latitude: z.coerce.number().min(-90).max(90),
   longitude: z.coerce.number().min(-180).max(180),
   heading: z.coerce.number().optional(),
+  // Present only while pushing from an active job (see ActiveJobScreen) —
+  // triggers a live broadcast to that booking's room in addition to the
+  // usual PlumberLocation upsert.
+  bookingId: z.string().min(1).optional(),
 });
 
 export const jobFeedQuerySchema = z.object({
