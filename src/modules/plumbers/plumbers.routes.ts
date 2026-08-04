@@ -97,6 +97,10 @@ router.post(
   upload.single('file'),
   controller.bulkAddTeamMembers
 );
+// Public — a static, non-sensitive template file; gating it behind auth would
+// only get in the way of a plain URL open (no Authorization header) from the
+// client, for no actual benefit.
+router.get('/me/roster/bulk-template', controller.downloadBulkTemplate);
 router.get('/:id', validate({ params: v.plumberIdParamSchema }), controller.getPlumberById);
 
 export default router;

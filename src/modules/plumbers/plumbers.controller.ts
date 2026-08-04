@@ -132,9 +132,12 @@ export const addTeamMember = asyncHandler(async (req: Request, res: Response) =>
   sendSuccess(res, member, undefined, 201);
 });
 
-// No header row — every row is data, in a fixed column order documented to
-// partners as "firstName, lastName, phone, idNumber, email (optional)".
-function parseTeamMemberCsv(buffer: Buffer): TeamMemberInput[] {
+// Every row is data, in a fixed column order documented to partners as
+// "firstName, lastName, phone, idNumber, email (optional)" — a header row
+// (like the one in the downloadable template) is optional, not required,
+// and is auto-detected and dropped below rather than needing the caller to
+// strip it themselves.
+function parseTeamMemberCsv(buffer: Buffer): { rows: TeamMemberInput[]; headerRowSkipped: boolean } {
   let records: string[][];
   try {
     records = parse(buffer, { columns: false, skip_empty_lines: true, trim: true });
@@ -144,20 +147,40 @@ function parseTeamMemberCsv(buffer: Buffer): TeamMemberInput[] {
 
   if (records.length === 0) throw createError('CSV file has no data rows', 400);
 
-  return records.map((row) => ({
-    firstName: row[0] ?? '',
-    lastName: row[1] ?? '',
-    phone: row[2] ?? '',
-    idNumber: row[3] ?? '',
-    email: row[4] || undefined,
-  }));
+  // A real phone number and ID number are always digit-heavy; column labels
+  // ("Phone Number", "ID Number", ...) never contain a single digit. Checking
+  // both (not just one) avoids ever misclassifying genuine data — an actual
+  // plumber's phone or ID could in principle be handed to us oddly, but never
+  // both fields with zero digits at once.
+  const looksLikeHeaderRow = (row: string[]): boolean => {
+    const phone = row[2] ?? '';
+    const idNumber = row[3] ?? '';
+    return !/\d/.test(phone) && !/\d/.test(idNumber);
+  };
+
+  const headerRowSkipped = looksLikeHeaderRow(records[0]!);
+  const dataRows = headerRowSkipped ? records.slice(1) : records;
+
+  return {
+    rows: dataRows.map((row) => ({
+      firstName: row[0] ?? '',
+      lastName: row[1] ?? '',
+      phone: row[2] ?? '',
+      idNumber: row[3] ?? '',
+      email: row[4] || undefined,
+    })),
+    headerRowSkipped,
+  };
 }
 
 export const bulkAddTeamMembers = asyncHandler(async (req: Request, res: Response) => {
   const file = req.file;
   if (!file) throw createError('CSV file is required', 400);
 
-  const rawRows = parseTeamMemberCsv(file.buffer);
+  const { rows: rawRows, headerRowSkipped } = parseTeamMemberCsv(file.buffer);
+  // Keeps reported row numbers matching the actual file line even when a
+  // header row was silently dropped above.
+  const rowOffset = headerRowSkipped ? 1 : 0;
 
   // Validate each row independently so one malformed row doesn't fail the
   // whole batch — invalid rows are reported back the same way the service
@@ -167,10 +190,10 @@ export const bulkAddTeamMembers = asyncHandler(async (req: Request, res: Respons
   rawRows.forEach((row, i) => {
     const parsed = addTeamMemberSchema.safeParse(row);
     if (parsed.success) {
-      validRows.push({ row: i + 1, data: parsed.data });
+      validRows.push({ row: i + 1 + rowOffset, data: parsed.data });
     } else {
       invalidResults.push({
-        row: i + 1,
+        row: i + 1 + rowOffset,
         phone: row.phone,
         status: 'skipped',
         reason: parsed.error.issues.map((issue) => issue.message).join('; '),
@@ -185,4 +208,21 @@ export const bulkAddTeamMembers = asyncHandler(async (req: Request, res: Respons
     skippedCount: serviceResult.skippedCount + invalidResults.length,
     results: [...invalidResults, ...serviceResult.results].sort((a, b) => a.row - b.row),
   });
+});
+
+// The header row here is optional as far as parseTeamMemberCsv is concerned
+// (auto-detected and dropped), but shipping it in the template is friendlier
+// than not — it tells the partner which column is which without them having
+// to go read the in-app instructions. The sample data row underneath is a
+// deliberate addition beyond what was asked for: a template with only a
+// header and no example of what a real row looks like is easy to fill in
+// wrong (e.g. quoting the phone number, or reordering columns).
+const BULK_TEMPLATE_CSV =
+  'First Name,Last Name,Phone Number,ID Number,Email Address(Optional)\r\n' +
+  'John,Doe,0712345678,12345678,john@example.com\r\n';
+
+export const downloadBulkTemplate = asyncHandler(async (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="plumber_bulk_upload_template.csv"');
+  res.send(BULK_TEMPLATE_CSV);
 });
