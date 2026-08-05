@@ -178,13 +178,9 @@ export const bulkAddTeamMembers = asyncHandler(async (req: Request, res: Respons
   if (!file) throw createError('CSV file is required', 400);
 
   const { rows: rawRows, headerRowSkipped } = parseTeamMemberCsv(file.buffer);
-  // Keeps reported row numbers matching the actual file line even when a
-  // header row was silently dropped above.
   const rowOffset = headerRowSkipped ? 1 : 0;
 
-  // Validate each row independently so one malformed row doesn't fail the
-  // whole batch — invalid rows are reported back the same way the service
-  // reports skipped duplicate-phone rows, just without ever reaching it.
+ 
   const validRows: { row: number; data: TeamMemberInput }[] = [];
   const invalidResults: { row: number; phone: string; status: 'skipped'; reason: string }[] = [];
   rawRows.forEach((row, i) => {
@@ -210,16 +206,10 @@ export const bulkAddTeamMembers = asyncHandler(async (req: Request, res: Respons
   });
 });
 
-// The header row here is optional as far as parseTeamMemberCsv is concerned
-// (auto-detected and dropped), but shipping it in the template is friendlier
-// than not — it tells the partner which column is which without them having
-// to go read the in-app instructions. The sample data row underneath is a
-// deliberate addition beyond what was asked for: a template with only a
-// header and no example of what a real row looks like is easy to fill in
-// wrong (e.g. quoting the phone number, or reordering columns).
+
 const BULK_TEMPLATE_CSV =
   'First Name,Last Name,Phone Number,ID Number,Email Address(Optional)\r\n' +
-  'John,Doe,0712345678,12345678,john@example.com\r\n';
+  'John,Doe,0712345678,12345678,john@gmail.com\r\n';
 
 export const downloadBulkTemplate = asyncHandler(async (_req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/csv');
