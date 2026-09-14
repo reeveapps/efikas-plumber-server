@@ -10,6 +10,7 @@ export const env = {
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN || 'localhost',
   PARTNER_CLIENT_URL: process.env.PARTNER_CLIENT_URL || 'http://localhost:3000',
   ADMIN_APP_URL: process.env.ADMIN_APP_URL || 'http://localhost:3002',
+  MARKETING_CLIENT_URL: process.env.MARKETING_CLIENT_URL || 'http://localhost:3003',
 
   CF_ACCOUNT_ID: process.env.CF_ACCOUNT_ID || '',
   CF_ACCESS_KEY_ID: process.env.CF_ACCESS_KEY_ID || '',
@@ -26,8 +27,8 @@ export const env = {
   // Brevo transactional email API — HTTP-based (not SMTP), since SMTP ports
   // are blocked outbound on Railway and most PaaS hosts regardless of config.
   BREVO_API_KEY: process.env.BREVO_API_KEY || '',
-  BREVO_SENDER_EMAIL: process.env.BREVO_SENDER_EMAIL || 'noreply@plumbers.app',
-  BREVO_SENDER_NAME: process.env.BREVO_SENDER_NAME || 'Plumbers',
+  BREVO_SENDER_EMAIL: process.env.BREVO_SENDER_EMAIL || 'noreply@efikasplumber.com',
+  BREVO_SENDER_NAME: process.env.BREVO_SENDER_NAME || 'Efikas Plumber',
   JWT_RESET_SECRET: process.env.JWT_RESET_SECRET || 'jwt-reset-secret-change-in-prod',
  //For whatsapp
   META_API_TOKEN: process.env.META_API_TOKEN || '',

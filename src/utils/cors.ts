@@ -1,6 +1,6 @@
 import { env } from '../config/env.js';
 
-const allowedOrigins = [env.PARTNER_CLIENT_URL, env.ADMIN_APP_URL]
+const allowedOrigins = [env.PARTNER_CLIENT_URL, env.ADMIN_APP_URL, env.MARKETING_CLIENT_URL]
   .flatMap((url) => url.split(','))
   .map((o) => o.trim())
   .filter(Boolean);

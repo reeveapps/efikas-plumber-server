@@ -14,7 +14,7 @@ function layout(preheader: string, bodyHtml: string): string {
           <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;">
             <tr>
               <td style="background-color:${BRAND_COLOR};padding:20px 32px;">
-                <span style="color:#ffffff;font-size:20px;font-weight:700;">Plumbers</span>
+                <span style="color:#ffffff;font-size:20px;font-weight:700;">Efikas Plumber</span>
               </td>
             </tr>
             <tr>
@@ -24,7 +24,7 @@ function layout(preheader: string, bodyHtml: string): string {
             </tr>
             <tr>
               <td style="padding:16px 32px;background-color:#fafafa;color:#71717a;font-size:12px;">
-                This is an automated message from the Plumbers platform.
+                This is an automated message from the Efikas Plumber platform.
               </td>
             </tr>
           </table>
@@ -43,11 +43,11 @@ export async function sendTwoFactorCodeEmail(params: { to: string; code: string 
   const { to, code } = params;
   const html = layout(
     `Your verification code is ${code}`,
-    `<p>Your Plumbers admin console verification code is:</p>
+    `<p>Your Efikas Plumber admin console verification code is:</p>
      <p style="font-size:28px;font-weight:700;letter-spacing:4px;color:${BRAND_COLOR};margin:16px 0;">${code}</p>
      <p>It expires in 10 minutes. If you didn't request this, you can safely ignore this email.</p>`
   );
-  await sendEmail(to, 'Your Plumbers verification code', html);
+  await sendEmail(to, 'Your Efikas Plumber verification code', html);
 }
 
 export async function sendDeliveryRequestEmail(params: {
@@ -122,12 +122,12 @@ export async function sendPartnerAccountApprovedEmail(params: {
 }): Promise<void> {
   const { to, partnerName } = params;
   const html = layout(
-    'Your Plumbers partner account was approved',
+    'Your Efikas Plumber partner account was approved',
     `<p>Hi ${partnerName},</p>
      <p>Your partner account has been verified and approved. You can now list products, run ad campaigns, and publish training content.</p>
      <p>${button(`${env.PARTNER_CLIENT_URL}/partner/dashboard`, 'Go to your dashboard')}</p>`
   );
-  await sendEmail(to, 'Your Plumbers partner account was approved', html);
+  await sendEmail(to, 'Your Efikas Plumber partner account was approved', html);
 }
 
 export async function sendAdminInviteEmail(params: {
@@ -137,11 +137,11 @@ export async function sendAdminInviteEmail(params: {
 }): Promise<void> {
   const { to, name, inviteUrl } = params;
   const html = layout(
-    "You're invited to the Plumbers admin console",
+    "You're invited to the Efikas Plumber admin console",
     `<p>Hi ${name},</p>
-     <p>You've been invited to join the Plumbers admin console. Set your password to get started:</p>
+     <p>You've been invited to join the Efikas Plumber admin console. Set your password to get started:</p>
      <p>${button(inviteUrl, 'Set your password')}</p>
      <p>This link expires in 7 days.</p>`
   );
-  await sendEmail(to, "You're invited to the Plumbers admin console", html);
+  await sendEmail(to, "You're invited to the Efikas Plumber admin console", html);
 }

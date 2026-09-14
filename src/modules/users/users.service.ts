@@ -95,3 +95,42 @@ export async function requestAccountDeletion(userId: string): Promise<void> {
     prisma.deviceToken.deleteMany({ where: { userId } }),
   ]);
 }
+
+// Public counterpart to requestAccountDeletion — for someone requesting
+// deletion from the marketing site rather than the logged-in app, where we
+// have no session to trust. Identity is confirmed via phone OTP first, same
+// two-step shape as changePhone above (no `code` sends it, `code` verifies).
+// Never creates an account for an unrecognized phone — unlike the login OTP
+// flow, a wrong number here should fail, not sign someone up.
+export async function requestAccountDeletionByPhone(
+  phone: string,
+  code: string | undefined
+): Promise<{ otpSent: true } | { deactivated: true }> {
+  const normalizedPhone = formatPhoneNumber(phone);
+  if (!normalizedPhone) throw createError('Invalid phone number', 400);
+
+  const user = await prisma.user.findUnique({ where: { phone: normalizedPhone } });
+  if (!user) throw createError('No account found with this phone number', 404);
+
+  if (!code) {
+    try {
+      await sendTwilioOtp(toE164(normalizedPhone));
+    } catch (err) {
+      throw createError('Failed to send verification code. Please try again.', 502);
+    }
+    return { otpSent: true };
+  }
+
+  let check: Awaited<ReturnType<typeof verifyTwilioOtp>>;
+  try {
+    check = await verifyTwilioOtp(toE164(normalizedPhone), code);
+  } catch (err) {
+    throw createError('No pending OTP found. Please request a new code.', 400);
+  }
+  if (check.status !== 'approved') {
+    throw createError('Incorrect code', 400);
+  }
+
+  await requestAccountDeletion(user.id);
+  return { deactivated: true };
+}

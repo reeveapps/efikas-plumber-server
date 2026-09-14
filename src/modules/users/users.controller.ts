@@ -43,3 +43,8 @@ export const deleteMe = asyncHandler(async (req: Request, res: Response) => {
   await usersService.requestAccountDeletion(req.user!.userId);
   sendSuccess(res, null, 'Account deletion requested');
 });
+
+export const requestAccountDeletionByPhone = asyncHandler(async (req: Request, res: Response) => {
+  const result = await usersService.requestAccountDeletionByPhone(req.body.phone, req.body.code);
+  sendSuccess(res, result);
+});

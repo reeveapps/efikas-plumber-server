@@ -7,6 +7,15 @@ import * as v from './users.validation.js';
 
 const router = Router();
 
+// Public — reachable from the marketing site without being logged into the
+// app (Google Play's data-safety policy requires account deletion be
+// requestable this way). Must come before `router.use(authenticate)` below.
+router.post(
+  '/deletion-request',
+  validate({ body: v.requestAccountDeletionSchema }),
+  controller.requestAccountDeletionByPhone
+);
+
 router.use(authenticate);
 
 router.get('/me', controller.getMe);

@@ -22,3 +22,12 @@ export const registerDeviceSchema = z.object({
 export const deviceIdParamSchema = z.object({
   tokenId: z.string().min(1),
 });
+
+// Public — no auth (reachable from the marketing site without the app
+// installed). Step 1 (no `code`): sends an OTP to `phone` to confirm the
+// requester owns the account before deactivating it. Step 2 (with `code`):
+// verifies it and deactivates. Mirrors changePhoneSchema's two-step shape.
+export const requestAccountDeletionSchema = z.object({
+  phone: z.string().min(9).max(15),
+  code: z.string().min(4).max(10).optional(),
+});
