@@ -3,7 +3,9 @@ import { prisma } from '../../db/index.js';
 import { createError } from '../../middleware/error.middleware.js';
 import { cursorArgs, paginateResults } from '../../utils/pagination.js';
 import { sendPush } from '../../utils/push.js';
-import { emitNewMessage } from '../../realtime/socket.js';
+import { emitBookingUpdate, emitJobOffer, emitNewMessage } from '../../realtime/socket.js';
+import { scheduleOfferTimeout } from '../../jobs/offer-timeouts.js';
+import { finishBooking } from '../../realtime/plumber-location-store.js';
 import { AuthUser } from '../../types/index.js';
 import { matchBooking } from './matching.service.js';
 
@@ -88,6 +90,43 @@ export async function createBooking(customerId: string, data: CreateBookingInput
   return prisma.booking.findUniqueOrThrow({ where: { id: booking.id } });
 }
 
+const IN_PROGRESS_STATUSES: BookingStatus[] = [
+  'ACCEPTED',
+  'EN_ROUTE',
+  'ARRIVED',
+  'INSPECTING',
+  'AGREEMENT_REACHED',
+  'IN_PROGRESS',
+];
+
+// The one job a customer or plumber is currently in the middle of, for the
+// app's persistent "active job" banner. Deliberately narrow: only accepted-
+// through-in-progress bookings (a matching/requested one has no plumber to
+// talk about yet, and finished ones shouldn't nag), and only names/avatars for
+// the two parties — no phone numbers, which the app otherwise reveals in
+// stages. One indexed lookup, cheap enough to re-run on every change signal.
+//
+// A plumber can hold several active jobs at once, so "which one" matters: it's
+// the one most recently touched (`updatedAt`: accepted, status advanced,
+// agreement confirmed), not the newest by `createdAt`, which is when the
+// customer *requested* it and says nothing about which job the plumber is
+// actually on. Accepting an older request after a newer one would otherwise
+// leave the banner on the wrong job.
+export async function getActiveBooking(requester: AuthUser) {
+  if (requester.role !== 'CUSTOMER' && requester.role !== 'PLUMBER') return null;
+  return prisma.booking.findFirst({
+    where: {
+      status: { in: IN_PROGRESS_STATUSES },
+      ...(requester.role === 'CUSTOMER' ? { customerId: requester.profileId } : { plumberId: requester.profileId }),
+    },
+    orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+    include: {
+      customer: { select: { id: true, user: { select: { name: true, avatarUrl: true } } } },
+      plumber: { select: { id: true, user: { select: { name: true, avatarUrl: true } } } },
+    },
+  });
+}
+
 export async function getBookingDetail(bookingId: string, requester: AuthUser) {
   const booking = await prisma.booking.findUnique({ where: { id: bookingId }, include: BOOKING_DETAIL_INCLUDE });
   if (!booking) throw createError('Booking not found', 404);
@@ -145,6 +184,10 @@ export async function selectPlumber(bookingId: string, customerId: string, plumb
       }),
     ]);
 
+    scheduleOfferTimeout(now);
+    emitBookingUpdate(bookingId);
+    emitJobOffer(plumber.userId, { bookingId, offerId: createdOffer.id });
+
     try {
       const tokens = await prisma.deviceToken.findMany({ where: { userId: plumber.userId }, select: { fcmToken: true } });
       if (tokens.length) {
@@ -189,6 +232,10 @@ export async function cancelBooking(bookingId: string, requester: AuthUser, reas
     }),
     prisma.bookingStatusLog.create({ data: { bookingId, status: 'CANCELLED', note: reason } }),
   ]);
+  // The one database write of the plumber's position for this job (a no-op if
+  // they never started sharing it).
+  await finishBooking(bookingId);
+  emitBookingUpdate(bookingId);
 
   return prisma.booking.findUniqueOrThrow({ where: { id: bookingId } });
 }
@@ -222,6 +269,7 @@ export async function updateStatus(bookingId: string, plumberId: string, data: U
       data: { bookingId, status: data.status, latitude: data.latitude, longitude: data.longitude, note: data.note },
     }),
   ]);
+  emitBookingUpdate(bookingId);
 
   await notifyCustomerOfStatus(booking.customerId, bookingId, data.status);
 
@@ -246,6 +294,7 @@ export async function plumberConfirmAgreement(bookingId: string, plumberId: stri
     await prisma.bookingStatusLog.create({ data: { bookingId, status: 'AGREEMENT_REACHED' } });
     await notifyCustomerOfStatus(booking.customerId, bookingId, 'AGREEMENT_REACHED');
   }
+  emitBookingUpdate(bookingId);
 
   return updated;
 }
@@ -267,6 +316,7 @@ export async function customerConfirmAgreement(bookingId: string, customerId: st
   if (bothConfirmed) {
     await prisma.bookingStatusLog.create({ data: { bookingId, status: 'AGREEMENT_REACHED' } });
   }
+  emitBookingUpdate(bookingId);
 
   return updated;
 }
@@ -283,6 +333,9 @@ export async function completeBooking(bookingId: string, plumberId: string) {
     prisma.bookingStatusLog.create({ data: { bookingId, status: 'COMPLETED' } }),
   ]);
 
+  // The one database write of the plumber's position for this job.
+  await finishBooking(bookingId);
+  emitBookingUpdate(bookingId);
   await notifyCustomerOfStatus(booking.customerId, bookingId, 'COMPLETED');
 
   return updated;
@@ -305,11 +358,13 @@ export async function createPaymentRecord(
   const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
   if (!booking || booking.plumberId !== plumberId) throw createError('Booking not found', 404);
 
-  return prisma.paymentRecord.upsert({
+  const record = await prisma.paymentRecord.upsert({
     where: { bookingId },
     create: { bookingId, amountKes: data.amountKes, method: data.method, reportedByPlumberAt: new Date() },
     update: { amountKes: data.amountKes, method: data.method, reportedByPlumberAt: new Date() },
   });
+  emitBookingUpdate(bookingId);
+  return record;
 }
 
 export async function confirmPaymentRecord(bookingId: string, customerId: string) {
@@ -330,6 +385,7 @@ export async function confirmPaymentRecord(bookingId: string, customerId: string
     }
   }
 
+  emitBookingUpdate(bookingId);
   return updated;
 }
 
@@ -340,7 +396,9 @@ export async function disputePaymentRecord(bookingId: string, customerId: string
   const record = await prisma.paymentRecord.findUnique({ where: { bookingId } });
   if (!record) throw createError('Payment record not found', 404);
 
-  return prisma.paymentRecord.update({ where: { bookingId }, data: { disputedAt: new Date() } });
+  const disputed = await prisma.paymentRecord.update({ where: { bookingId }, data: { disputedAt: new Date() } });
+  emitBookingUpdate(bookingId);
+  return disputed;
 }
 
 interface ReviewInput {

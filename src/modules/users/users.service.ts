@@ -1,10 +1,8 @@
 import { Role } from '@prisma/client';
 import { prisma } from '../../db/index.js';
 import { createError } from '../../middleware/error.middleware.js';
-import { sendOtp as sendTwilioOtp, verifyOtp as verifyTwilioOtp } from '../../utils/twilio-otp.js';
+import { sendPhoneOtp, verifyPhoneOtp } from '../../utils/phone-otp.js';
 import formatPhoneNumber from '../../utils/formatPhoneNumber.js';
-
-const toE164 = (phone: string): string => `+${phone}`;
 
 const PROFILE_INCLUDE_BY_ROLE: Record<Role, Record<string, true>> = {
   [Role.CUSTOMER]: { customerProfile: true },
@@ -48,23 +46,11 @@ export async function changePhone(
       throw createError('An account already exists with this phone number', 409);
     }
 
-    try {
-      await sendTwilioOtp(toE164(normalizedPhone));
-    } catch (err) {
-      throw createError('Failed to send verification code. Please try again.', 502);
-    }
+    await sendPhoneOtp({ userId, phone: normalizedPhone, kind: 'verify_phone' });
     return { otpSent: true };
   }
 
-  let check: Awaited<ReturnType<typeof verifyTwilioOtp>>;
-  try {
-    check = await verifyTwilioOtp(toE164(normalizedPhone), code);
-  } catch (err) {
-    throw createError('No pending OTP found. Please request a new code.', 400);
-  }
-  if (check.status !== 'approved') {
-    throw createError('Incorrect code', 400);
-  }
+  await verifyPhoneOtp({ userId, phone: normalizedPhone, kind: 'verify_phone', code });
 
   await prisma.user.update({
     where: { id: userId },
@@ -113,23 +99,11 @@ export async function requestAccountDeletionByPhone(
   if (!user) throw createError('No account found with this phone number', 404);
 
   if (!code) {
-    try {
-      await sendTwilioOtp(toE164(normalizedPhone));
-    } catch (err) {
-      throw createError('Failed to send verification code. Please try again.', 502);
-    }
+    await sendPhoneOtp({ userId: user.id, phone: normalizedPhone, kind: 'delete_account' });
     return { otpSent: true };
   }
 
-  let check: Awaited<ReturnType<typeof verifyTwilioOtp>>;
-  try {
-    check = await verifyTwilioOtp(toE164(normalizedPhone), code);
-  } catch (err) {
-    throw createError('No pending OTP found. Please request a new code.', 400);
-  }
-  if (check.status !== 'approved') {
-    throw createError('Incorrect code', 400);
-  }
+  await verifyPhoneOtp({ userId: user.id, phone: normalizedPhone, kind: 'delete_account', code });
 
   await requestAccountDeletion(user.id);
   return { deactivated: true };

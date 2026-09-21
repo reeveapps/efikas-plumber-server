@@ -29,6 +29,14 @@ export const env = {
   BREVO_API_KEY: process.env.BREVO_API_KEY || '',
   BREVO_SENDER_EMAIL: process.env.BREVO_SENDER_EMAIL || 'noreply@efikasplumber.com',
   BREVO_SENDER_NAME: process.env.BREVO_SENDER_NAME || 'Efikas Plumber',
+
+  // TextSMS (sms.textsms.co.ke) — sends every SMS: OTP codes and notifications.
+  // `SHORTCODE` is the registered sender ID shown as the sender. Unset in
+  // development, messages are logged to the console instead of sent.
+  TEXTSMS_API_KEY: process.env.TEXTSMS_API_KEY || '',
+  TEXTSMS_PARTNER_ID: process.env.TEXTSMS_PARTNER_ID || '',
+  TEXTSMS_SHORTCODE: process.env.TEXTSMS_SHORTCODE || '',
+  TEXTSMS_API_URL: process.env.TEXTSMS_API_URL || 'https://sms.textsms.co.ke/api/services/sendsms/',
   JWT_RESET_SECRET: process.env.JWT_RESET_SECRET || 'jwt-reset-secret-change-in-prod',
  //For whatsapp
   META_API_TOKEN: process.env.META_API_TOKEN || '',

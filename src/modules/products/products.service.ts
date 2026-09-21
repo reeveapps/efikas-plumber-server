@@ -3,6 +3,7 @@ import { prisma } from '../../db/index.js';
 import { createError } from '../../middleware/error.middleware.js';
 import { cursorArgs, paginateResults } from '../../utils/pagination.js';
 import { sendDeliveryRequestEmail } from '../../utils/email/index.js';
+import { emitDeliveryRequest } from '../../realtime/socket.js';
 
 // Day-count based rather than true calendar months/years — avoids Postgres/JS
 // calendar-arithmetic edge cases (Jan 31 + 1 month?) and keeps every interval's
@@ -331,7 +332,7 @@ export async function createDeliveryRequest(
 ) {
   const product = await prisma.product.findUnique({
     where: { id: productId },
-    include: { partner: { select: { businessName: true, user: { select: { email: true } } } } },
+    include: { partner: { select: { userId: true, businessName: true, user: { select: { email: true } } } } },
   });
   if (!product) throw createError('Product not found', 404);
 
@@ -346,6 +347,8 @@ export async function createDeliveryRequest(
       preferredAt: data.preferredAt,
     },
   });
+
+  emitDeliveryRequest(product.partner.userId, deliveryRequest.id);
 
   if (product.partner.user.email) {
     try {

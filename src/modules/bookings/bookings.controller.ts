@@ -22,6 +22,11 @@ export const createBooking = asyncHandler(async (req: Request, res: Response) =>
   sendSuccess(res, booking, undefined, 201);
 });
 
+export const getActiveBooking = asyncHandler(async (req: Request, res: Response) => {
+  const booking = await bookingsService.getActiveBooking(req.user!);
+  sendSuccess(res, booking);
+});
+
 export const getBookingDetail = asyncHandler(async (req: Request, res: Response) => {
   const booking = await bookingsService.getBookingDetail(req.params.id, req.user!);
   sendSuccess(res, booking);

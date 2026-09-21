@@ -21,6 +21,8 @@ router.post(
   controller.createBooking
 );
 
+// Must stay above `/:id`, or "active" would be matched as a booking id.
+router.get('/active', controller.getActiveBooking);
 router.get('/:id', validate({ params: v.idParamSchema }), controller.getBookingDetail);
 router.get('/:id/matches', requireCustomer, validate({ params: v.idParamSchema }), controller.getMatches);
 router.post(

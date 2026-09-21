@@ -13,18 +13,13 @@ import {
   verifyPasswordResetToken,
 } from '../../utils/jwt.js';
 import { generateOtpCode, hashOtpCode, compareOtpCode } from '../../utils/otp.js';
-import { sendOtp as sendTwilioOtp, verifyOtp as verifyTwilioOtp } from '../../utils/twilio-otp.js';
+import { sendPhoneOtp, verifyPhoneOtp } from '../../utils/phone-otp.js';
 import { sendEmail } from '../../utils/email.js';
 import { sendTwoFactorCodeEmail } from '../../utils/email/index.js';
 import { verifyGoogleIdToken, verifyAppleIdToken } from '../../utils/oauth.js';
 import formatPhoneNumber from '../../utils/formatPhoneNumber.js';
 import { env } from '../../config/env.js';
 import { OTP_EXPIRY_SECONDS, OTP_MAX_ATTEMPTS } from '../../config/constants.js';
-
-// Twilio Verify expects E.164 (`+2547...`); the rest of the app stores/passes
-// phone numbers without the leading `+` (see formatPhoneNumber.ts), so it's
-// only added at this boundary.
-const toE164 = (phone: string): string => `+${phone}`;
 
 interface TokenPair {
   accessToken: string;
@@ -97,11 +92,7 @@ export async function requestOtp(phone: string, role: 'CUSTOMER' | 'PLUMBER'): P
     assertNotBanned(user);
   }
 
-  try {
-    //await sendTwilioOtp(toE164(normalizedPhone));
-  } catch (err) {
-    throw createError('Failed to send verification code. Please try again.', 502);
-  }
+  await sendPhoneOtp({ userId: user.id, phone: normalizedPhone, kind: 'login' });
 }
 
 export async function verifyOtp(phone: string, code: string): Promise<{ tokens: TokenPair; user: { id: string; role: Role; isNew: boolean } }> {
@@ -112,18 +103,7 @@ export async function verifyOtp(phone: string, code: string): Promise<{ tokens: 
   if (!user) throw createError('No pending verification for this phone number', 404);
   assertNotBanned(user);
 
-  //let check: Awaited<ReturnType<typeof verifyTwilioOtp>>;
-  let check = {
-    status:'approved'
-  }
-  try {
-      //check = await verifyTwilioOtp(toE164(normalizedPhone), code);
-  } catch (err) {
-    throw createError('No pending OTP found. Please request a new code.', 400);
-  }
-  if (check.status !== 'approved') {
-    throw createError('Incorrect code', 400);
-  }
+  await verifyPhoneOtp({ userId: user.id, phone: normalizedPhone, kind: 'login', code });
 
   const wasUnverified = !user.phoneVerifiedAt;
   if (wasUnverified) {
@@ -167,23 +147,11 @@ export async function upgradeGuest(
       throw createError('An account already exists with this phone number', 409);
     }
 
-    try {
-      await sendTwilioOtp(toE164(normalizedPhone));
-    } catch (err) {
-      throw createError('Failed to send verification code. Please try again.', 502);
-    }
+    await sendPhoneOtp({ userId: user.id, phone: normalizedPhone, kind: 'verify_phone' });
     return { otpSent: true };
   }
 
-  let check: Awaited<ReturnType<typeof verifyTwilioOtp>>;
-  try {
-    check = await verifyTwilioOtp(toE164(normalizedPhone), code);
-  } catch (err) {
-    throw createError('No pending OTP found. Please request a new code.', 400);
-  }
-  if (check.status !== 'approved') {
-    throw createError('Incorrect code', 400);
-  }
+  await verifyPhoneOtp({ userId: user.id, phone: normalizedPhone, kind: 'verify_phone', code });
 
   await prisma.user.update({
     where: { id: user.id },

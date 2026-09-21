@@ -10,7 +10,7 @@ import apiRouter from './routes/index.js';
 const app: Application = express();
 
 app.use(cors({
-  origin: corsOriginChecker,
+  origin: "*",//corsOriginChecker,
   credentials: true,
 }));
 //app.use(morgan(env.NODE_ENV === 'development' ? 'dev' : 'combined'));

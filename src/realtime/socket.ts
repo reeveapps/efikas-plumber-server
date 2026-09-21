@@ -1,9 +1,10 @@
 import type { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { prisma } from '../db/index.js';
-import { verifyAccessToken } from '../utils/jwt.js';
+import { verifyAccessToken, verifySocketToken } from '../utils/jwt.js';
 import { corsOriginChecker } from '../utils/cors.js';
 import { AuthUser } from '../types/index.js';
+import { lastKnownPositionForBooking } from './plumber-location-store.js';
 
 let io: Server | null = null;
 
@@ -42,9 +43,17 @@ export function initSocket(httpServer: HttpServer): Server {
 
   io.use((socket, next) => {
     try {
+      // Mobile sends its access token; browsers (httpOnly cookies, no JS
+      // access to the real token) send a short-lived socket token instead.
+      const socketToken = socket.handshake.auth?.socketToken as string | undefined;
       const token = socket.handshake.auth?.token as string | undefined;
-      if (!token) throw new Error('Missing auth token');
-      socket.data.user = verifyAccessToken(token);
+      if (socketToken) {
+        socket.data.user = verifySocketToken(socketToken);
+      } else if (token) {
+        socket.data.user = verifyAccessToken(token);
+      } else {
+        throw new Error('Missing auth token');
+      }
       next();
     } catch {
       next(new Error('Unauthorized'));
@@ -101,6 +110,17 @@ export function initSocket(httpServer: HttpServer): Server {
         });
         if (!booking || !isParticipant(booking, user)) return;
         socket.join(bookingRoom(bookingId));
+        // Someone opening tracking mid-job gets the plumber's current spot at
+        // once, rather than a blank map until the next ping arrives.
+        const last = lastKnownPositionForBooking(bookingId);
+        if (last) {
+          socket.emit('location:update', {
+            bookingId,
+            latitude: last.latitude,
+            longitude: last.longitude,
+            heading: last.heading,
+          });
+        }
       } catch (err) {
         console.error('[Socket] location:join failed:', err);
       }
@@ -135,6 +155,50 @@ export function emitNewMessage(bookingId: string, message: unknown, recipientUse
 export function emitNewConversationMessage(conversationId: string, message: unknown, recipientUserId: string): void {
   io?.to(conversationRoom(conversationId)).emit('conversation:message', message);
   io?.to(userRoom(recipientUserId)).emit('conversation:unread', { conversationId });
+}
+
+/// "Something changed on this booking — refetch it." A signal only, carrying
+/// no booking data: REST stays the source of truth, so a missed or duplicated
+/// event can never leave a client with wrong state, only a refetch late or
+/// early. Replaces the status polling on the matching / tracking / active-job
+/// screens, which need to have joined the booking's room (`location:join`).
+export function emitBookingUpdate(bookingId: string): void {
+  io?.to(bookingRoom(bookingId)).emit('booking:update', { bookingId });
+  void notifyBookingParticipants(bookingId);
+}
+
+/// Same signal, but over each participant's always-joined user room as
+/// `bookings:changed`, for list screens (a plumber's My Jobs tab) that aren't
+/// inside any one booking's room. Costs one primary-key lookup per booking
+/// state change — a handful per job, versus a poll that queries on a timer.
+async function notifyBookingParticipants(bookingId: string): Promise<void> {
+  if (!io) return;
+  try {
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: { customer: { select: { userId: true } }, plumber: { select: { userId: true } } },
+    });
+    if (!booking) return;
+    for (const userId of [booking.customer?.userId, booking.plumber?.userId]) {
+      if (userId) io.to(userRoom(userId)).emit('bookings:changed', { bookingId });
+    }
+  } catch (err) {
+    console.error('[Socket] notifyBookingParticipants failed:', err);
+  }
+}
+
+/// Tells a plumber a new job offer exists for them, over their always-joined
+/// user room (no room join needed) — replaces the job feed's polling. Push
+/// notifications still go out separately for when the app is backgrounded.
+export function emitJobOffer(plumberUserId: string, offer: { bookingId: string; offerId: string }): void {
+  io?.to(userRoom(plumberUserId)).emit('job:offer', offer);
+}
+
+/// Tells a partner a customer/plumber just requested delivery of one of their
+/// products — a signal for the portal's live counters to refetch, delivered
+/// over the partner's always-joined user room.
+export function emitDeliveryRequest(partnerUserId: string, deliveryRequestId: string): void {
+  io?.to(userRoom(partnerUserId)).emit('delivery:new', { deliveryRequestId });
 }
 
 /// Broadcasts a plumber's live position to everyone in that booking's room

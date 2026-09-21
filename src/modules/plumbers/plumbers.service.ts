@@ -6,7 +6,13 @@ import { cursorArgs, paginateResults } from '../../utils/pagination.js';
 import { sendPush } from '../../utils/push.js';
 import { uploadToR2, UploadedFile } from '../../utils/r2.js';
 import formatPhoneNumber from '../../utils/formatPhoneNumber.js';
-import { emitPlumberLocation } from '../../realtime/socket.js';
+import { emitBookingUpdate, emitPlumberLocation } from '../../realtime/socket.js';
+import {
+  checkBooking,
+  isDatabaseWriteDue,
+  markDatabaseWrite,
+  rememberPosition,
+} from '../../realtime/plumber-location-store.js';
 
 // Public-safe fields only — never expose idNumber/idDocumentUrl/certificateUrls/businessRegUrl.
 const PLUMBER_PUBLIC_SELECT = {
@@ -193,36 +199,43 @@ export async function updateAvailability(
   return prisma.plumberProfile.update({ where: { id: plumberId }, data });
 }
 
-const TERMINAL_BOOKING_STATUSES = new Set(['COMPLETED', 'CANCELLED', 'DISPUTED', 'EXPIRED']);
-
 // `bookingId` is optional — the general "am I online" ping from the Map tab
 // (browsing nearby jobs) omits it and only ever updates PlumberLocation for
 // the discovery bounding-box query. Passing it (from ActiveJobScreen while a
-// job is accepted/en route/etc.) additionally broadcasts the position live
-// to that booking's room, for the customer's LiveTrackingScreen — this is
-// deliberately checked server-side (not trusted from the client) so a
-// plumber can't push location updates to a booking that isn't theirs or has
-// already finished.
+// job is accepted/en route/etc.) broadcasts the position live to that
+// booking's room, for the customer's LiveTrackingScreen — deliberately
+// checked server-side (not trusted from the client) so a plumber can't push
+// location updates to a booking that isn't theirs or has already finished.
+//
+// During an active job the position is NOT written to the database at all: it
+// is held in memory (see plumber-location-store.ts) and relayed over the
+// socket, then saved once when the job completes or is cancelled. Outside a
+// job, the "am I online" write is throttled (older app versions still push
+// every 30s); the throttle state lives in the same store and resets on
+// restart, which just means the next ping writes fresh.
 export async function upsertLocation(
   plumberId: string,
   data: { latitude: number; longitude: number; heading?: number; bookingId?: string }
 ) {
   const { bookingId, ...location } = data;
 
-  const updated = await prisma.plumberLocation.upsert({
+  if (bookingId) {
+    const job = await checkBooking(bookingId);
+    if (job.plumberId === plumberId && !job.terminal) {
+      rememberPosition(bookingId, plumberId, location);
+      emitPlumberLocation(bookingId, location);
+      return { plumberId, ...location };
+    }
+  }
+
+  if (!isDatabaseWriteDue(plumberId)) return { plumberId, ...location };
+  const persisted = await prisma.plumberLocation.upsert({
     where: { plumberId },
     create: { plumberId, ...location },
     update: location,
   });
-
-  if (bookingId) {
-    const booking = await prisma.booking.findUnique({ where: { id: bookingId }, select: { plumberId: true, status: true } });
-    if (booking && booking.plumberId === plumberId && !TERMINAL_BOOKING_STATUSES.has(booking.status)) {
-      emitPlumberLocation(bookingId, location);
-    }
-  }
-
-  return updated;
+  markDatabaseWrite(plumberId);
+  return persisted;
 }
 
 export async function getJobFeed(plumberId: string, cursor: string | undefined, limit: number) {
@@ -303,6 +316,8 @@ export async function acceptJobOffer(plumberId: string, offerId: string) {
     return updated;
   });
 
+  emitBookingUpdate(updatedOffer.bookingId);
+
   try {
     const booking = await prisma.booking.findUnique({
       where: { id: updatedOffer.bookingId },
@@ -336,10 +351,12 @@ export async function declineJobOffer(plumberId: string, offerId: string) {
   if (!offer || offer.plumberId !== plumberId || offer.status !== 'PENDING') {
     throw createError('Job offer not available', 409);
   }
-  return prisma.jobOffer.update({
+  const declined = await prisma.jobOffer.update({
     where: { id: offerId },
     data: { status: 'DECLINED', respondedAt: new Date() },
   });
+  emitBookingUpdate(offer.bookingId);
+  return declined;
 }
 
 export async function getEarnings(

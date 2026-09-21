@@ -21,6 +21,7 @@ router.post('/2fa/verify', validate({ body: v.twoFactorVerifySchema }), controll
 
 router.post('/refresh', validate({ body: v.refreshSchema }), controller.refresh);
 router.post('/logout', authenticate, controller.logout);
+router.post('/socket-token', authenticate, controller.issueSocketToken);
 
 router.post('/password/forgot', validate({ body: v.passwordForgotSchema }), controller.forgotPassword);
 router.post('/password/reset', validate({ body: v.passwordResetSchema }), controller.resetPassword);

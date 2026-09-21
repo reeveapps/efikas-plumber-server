@@ -2,6 +2,9 @@ import { prisma } from '../../db/index.js';
 import { boundingBox, haversineDistanceKm } from '../../utils/geo.js';
 import { sendPush } from '../../utils/push.js';
 import { JOB_OFFER_MAX_CANDIDATES } from '../../config/constants.js';
+import { emitBookingUpdate, emitJobOffer } from '../../realtime/socket.js';
+import { scheduleOfferTimeout } from '../../jobs/offer-timeouts.js';
+import { lastKnownPositionForPlumber } from '../../realtime/plumber-location-store.js';
 import { VerificationStatus } from '@prisma/client';
 
 const MAX_BOUNDING_RADIUS_KM = 30;
@@ -21,7 +24,7 @@ export async function matchBooking(bookingId: string): Promise<void> {
         longitude: { gte: box.minLng, lte: box.maxLng },
       },
       // Excludes any plumber already offered this booking (not just PENDING) —
-      // otherwise the 20s matching cron re-matches and re-notifies the same
+      // otherwise the offer-timeout sweep re-matches and re-notifies the same
       // nearby plumber every time their previous offer times out, in an
       // infinite "New job nearby" loop instead of expanding to new candidates.
       jobOffers: {
@@ -48,7 +51,10 @@ export async function matchBooking(bookingId: string): Promise<void> {
 
   const ranked = candidates
     .map((c) => {
-      const loc = c.currentLocation!;
+      // A plumber on an active job isn't writing to the database, so their
+      // saved position is where they were before the job; rank them by where
+      // they actually are now.
+      const loc = lastKnownPositionForPlumber(c.id) ?? c.currentLocation!;
       const distanceKm = haversineDistanceKm(booking.latitude, booking.longitude, loc.latitude, loc.longitude);
       return { ...c, distanceKm };
     })
@@ -71,6 +77,7 @@ export async function matchBooking(bookingId: string): Promise<void> {
         data: { status: 'MATCHING' },
       });
     }
+    emitBookingUpdate(bookingId);
     return;
   }
 
@@ -98,9 +105,13 @@ export async function matchBooking(bookingId: string): Promise<void> {
   });
   const offerIdByPlumberId = new Map(createdOffers.map((o) => [o.plumberId, o.id]));
 
+  scheduleOfferTimeout(now);
+  emitBookingUpdate(bookingId);
+
   for (const c of ranked) {
     const offerId = offerIdByPlumberId.get(c.id);
     if (!offerId) continue;
+    emitJobOffer(c.userId, { bookingId, offerId });
     try {
       const tokens = await prisma.deviceToken.findMany({ where: { userId: c.userId }, select: { fcmToken: true } });
       if (tokens.length === 0) continue;

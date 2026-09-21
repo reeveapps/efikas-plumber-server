@@ -4,6 +4,8 @@ import { AdminPermission, ConcernStatus, Prisma, Role, VerificationStatus } from
 import { prisma } from '../../db/index.js';
 import { createError } from '../../middleware/error.middleware.js';
 import { cursorArgs, paginateResults } from '../../utils/pagination.js';
+import { sendPush } from '../../utils/push.js';
+import { sendSms } from '../../utils/sms.js';
 import { generateAccessToken, generateRefreshToken } from '../../utils/jwt.js';
 import {
   sendAdminInviteEmail,
@@ -288,6 +290,27 @@ export async function listPendingKyc(cursor: string | undefined, limit: number) 
   return paginateResults(rows, limit);
 }
 
+// Best-effort push telling plumbers their KYC review finished. The app's
+// pending-review screen no longer polls for this — it tells the plumber a
+// notification is coming (plus a manual Refresh), so this push is what
+// actually delivers that promise.
+async function notifyPlumbersOfKycDecision(plumberIds: string[], approved: boolean): Promise<void> {
+  try {
+    const tokens = await prisma.deviceToken.findMany({
+      where: { user: { plumberProfile: { id: { in: plumberIds } } } },
+      select: { fcmToken: true },
+    });
+    await sendPush(
+      tokens.map((t) => t.fcmToken),
+      approved
+        ? { title: "You're approved!", body: 'Your account has been verified. You can now go online and accept jobs.', data: { type: 'kyc_approved' } }
+        : { title: 'Verification update', body: 'We could not approve your documents. Open the app to see what to fix.', data: { type: 'kyc_rejected' } }
+    );
+  } catch (err) {
+    console.error('[PUSH] KYC decision notify failed:', err);
+  }
+}
+
 // Approving a company-affiliated plumber approves every plumber under that
 // same Company in one action, not just the row that was clicked — a company
 // isn't meaningfully "half verified", and there's no separate per-company
@@ -299,6 +322,10 @@ export async function approveKyc(actorId: string, plumberId: string) {
   const now = new Date();
 
   if (plumber.companyId) {
+    const toApprove = await prisma.plumberProfile.findMany({
+      where: { companyId: plumber.companyId, verificationStatus: { not: VerificationStatus.APPROVED } },
+      select: { id: true },
+    });
     const [, updated] = await prisma.$transaction([
       prisma.company.update({
         where: { id: plumber.companyId },
@@ -313,6 +340,7 @@ export async function approveKyc(actorId: string, plumberId: string) {
     await logAdminAction(actorId, 'APPROVE_KYC', 'Company', plumber.companyId, {
       approvedPlumberCount: updated.count,
     });
+    await notifyPlumbersOfKycDecision(toApprove.map((p) => p.id), true);
 
     return prisma.plumberProfile.findUniqueOrThrow({ where: { id: plumberId } });
   }
@@ -327,6 +355,7 @@ export async function approveKyc(actorId: string, plumberId: string) {
   });
 
   await logAdminAction(actorId, 'APPROVE_KYC', 'PlumberProfile', plumberId);
+  await notifyPlumbersOfKycDecision([plumberId], true);
 
   return updated;
 }
@@ -341,6 +370,7 @@ export async function rejectKyc(actorId: string, plumberId: string, reason: stri
   });
 
   await logAdminAction(actorId, 'REJECT_KYC', 'PlumberProfile', plumberId, { reason });
+  await notifyPlumbersOfKycDecision([plumberId], false);
 
   return updated;
 }
@@ -838,10 +868,15 @@ export async function createAdminInvite(
   if (data.email) {
     await sendAdminInviteEmail({ to: data.email, name: data.name, inviteUrl });
   }
-  // No generic-text SMS delivery is currently wired up (see utils/sms.ts's doc
-  // comment — it only supports Twilio Verify's own OTP flow, not arbitrary
-  // messages), so a phone-only invite still returns `inviteUrl` below for the
-  // admin to share manually rather than silently failing to notify anyone.
+  if (data.phone) {
+    try {
+      await sendSms(data.phone, `You've been invited to the Efikas Plumber admin console. Set your password: ${inviteUrl}`);
+    } catch (err) {
+      // `inviteUrl` is still returned below, so the admin can share it by hand
+      // rather than an SMS hiccup making the whole invite fail.
+      console.error('[SMS] admin invite notify failed:', err);
+    }
+  }
 
   await logAdminAction(invitedById, 'INVITE_ADMIN', 'AdminInvite', invite.id, {
     name: data.name,

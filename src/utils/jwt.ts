@@ -33,6 +33,28 @@ export function verifyTwoFactorToken(token: string): { userId: string } {
   return { userId: decoded.userId };
 }
 
+// A browser can't safely hold the real access token (the web apps keep it
+// httpOnly), so it asks the API for one of these instead and presents it only
+// at Socket.IO handshake time. Two things stop it being a usable API
+// credential if it leaks: it's signed with a different secret than access
+// tokens (so `authenticate` rejects it outright), and it expires in minutes.
+// The socket client re-requests a fresh one on every (re)connect attempt.
+export function generateSocketToken(payload: AuthUser): string {
+  // Only the identity fields: `payload` is often a decoded access token still
+  // carrying `iat`/`exp`, and jsonwebtoken rejects `expiresIn` when the payload
+  // already has an `exp`.
+  const { userId, role, profileId } = payload;
+  return jwt.sign({ userId, role, profileId, type: 'socket' }, env.JWT_RESET_SECRET, {
+    expiresIn: '2m',
+  } as jwt.SignOptions);
+}
+
+export function verifySocketToken(token: string): AuthUser {
+  const decoded = jwt.verify(token, env.JWT_RESET_SECRET) as AuthUser & { type: string };
+  if (decoded.type !== 'socket') throw new Error('Invalid token type');
+  return { userId: decoded.userId, role: decoded.role, profileId: decoded.profileId };
+}
+
 export function generatePasswordResetToken(userId: string): string {
   return jwt.sign({ userId, type: 'password-reset' }, env.JWT_RESET_SECRET, {
     expiresIn: '15m',

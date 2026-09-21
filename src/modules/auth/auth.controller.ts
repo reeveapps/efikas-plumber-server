@@ -3,6 +3,7 @@ import { CookieOptions } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { env } from '../../config/env.js';
+import { generateSocketToken } from '../../utils/jwt.js';
 import * as authService from './auth.service.js';
 
 const isProd = env.NODE_ENV === 'production';
@@ -93,6 +94,10 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
   const tokens = await authService.refreshTokens(token);
   setTokenCookies(res, tokens);
   sendSuccess(res, tokens);
+});
+
+export const issueSocketToken = asyncHandler(async (req: Request, res: Response) => {
+  sendSuccess(res, { token: generateSocketToken(req.user!) });
 });
 
 export const logout = asyncHandler(async (_req: Request, res: Response) => {
