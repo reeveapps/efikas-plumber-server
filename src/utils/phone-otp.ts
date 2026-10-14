@@ -22,8 +22,20 @@ const purposeFor = (kind: OtpKind, phone: string): string => `${kind}:${phone}`;
 // the same user/number/purpose is rate limited.
 const RESEND_COOLDOWN_MS = 30_000;
 
+// Fixed-code test accounts — for Play Store / App Store review, where the
+// reviewer has no access to a real Kenyan SIM to receive an actual SMS.
+// Numbers are in the normalized `254...` form (see formatPhoneNumber.ts), not
+// `+254...`. Kept to exactly these two numbers; never pattern-matched, so it
+// can't accidentally widen to cover a real user's number.
+const TEST_OTP_CODE = '111111';
+const TEST_PHONES = new Set(['254700000000', '254700000001']);
+
 export async function sendPhoneOtp(params: { userId: string; phone: string; kind: OtpKind }): Promise<void> {
   const { userId, phone, kind } = params;
+  // No SMS is sent for a test number — the code is always TEST_OTP_CODE, so
+  // there is nothing to generate or deliver.
+  if (TEST_PHONES.has(phone)) return;
+
   const purpose = purposeFor(kind, phone);
 
   const latest = await prisma.otpCode.findFirst({
@@ -67,6 +79,12 @@ export async function sendPhoneOtp(params: { userId: string; phone: string; kind
 /// number and purpose. On success the code is consumed and can't be reused.
 export async function verifyPhoneOtp(params: { userId: string; phone: string; kind: OtpKind; code: string }): Promise<void> {
   const { userId, phone, kind, code } = params;
+
+  if (TEST_PHONES.has(phone)) {
+    if (code !== TEST_OTP_CODE) throw createError('Incorrect code', 400);
+    return;
+  }
+
   const purpose = purposeFor(kind, phone);
 
   const otp = await prisma.otpCode.findFirst({
